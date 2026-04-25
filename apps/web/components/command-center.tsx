@@ -37,6 +37,7 @@ import {
   createProject,
   createTodo,
   getStoredSession,
+  loadLlmStatus,
   login,
   register,
   type AuthSession,
@@ -44,6 +45,7 @@ import {
   type Credential,
   type DiaryEntry,
   type KnowledgeItem,
+  type LlmStatus,
   type Project,
   type Todo
 } from "@/lib/api";
@@ -129,12 +131,16 @@ export function CommandCenter({ initialData, live }: Props) {
   const [prompt, setPrompt] = useState("What should I focus on next across my projects and life OS?");
   const [activeComposer, setActiveComposer] = useState<"project" | "note" | "todo" | "diary" | "credential">("note");
   const [session, setSession] = useState<AuthSession | null>(null);
+  const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [authMessage, setAuthMessage] = useState("Sign in to write into your private workspace.");
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
     setSession(getStoredSession());
+    loadLlmStatus()
+      .then(setLlmStatus)
+      .catch(() => setLlmStatus(null));
   }, []);
 
   const stats = useMemo(() => [
@@ -248,6 +254,7 @@ export function CommandCenter({ initialData, live }: Props) {
           onSubmit={submitAuth}
           onSignOut={signOut}
         />
+        <LlmRuntimePanel status={llmStatus} />
         <Hero />
         <PlatformConstellation />
 
@@ -402,6 +409,48 @@ function SessionConsole(props: {
         )}
       </div>
     </section>
+  );
+}
+
+function LlmRuntimePanel({ status }: { status: LlmStatus | null }) {
+  const azureOk = Boolean(status?.azure.ok);
+  const gemmaInstalled = Boolean(status?.azure.expectedModelInstalled);
+  const primaryRoute = status?.routes.find((route) => route.policy === "coding");
+
+  return (
+    <section className="glass-panel relative overflow-hidden rounded-[2rem] p-5">
+      <div className="absolute -right-16 -top-16 h-40 w-40 rounded-full bg-cyan-300/10 blur-3xl" />
+      <div className="grid gap-4 lg:grid-cols-[1fr_1.3fr] lg:items-center">
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.35em] text-white/30">LLM Runtime</p>
+          <h2 className="mt-1 font-display text-3xl text-white">
+            {azureOk ? "Azure Ollama online" : "Azure Ollama not verified"}
+          </h2>
+          <p className="mt-2 text-sm text-white/42">
+            {status
+              ? `${status.azure.expectedModel ?? "Gemma"} ${gemmaInstalled ? "is installed" : "is not confirmed yet"}`
+              : "API status endpoint is not reachable yet."}
+          </p>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-3">
+          <RuntimeChip label="Azure" value={azureOk ? "online" : "offline"} active={azureOk} />
+          <RuntimeChip label="Gemma 4" value={gemmaInstalled ? "ready" : "missing"} active={gemmaInstalled} />
+          <RuntimeChip label="Route" value={primaryRoute?.model ?? "unknown"} active={Boolean(primaryRoute)} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function RuntimeChip({ label, value, active }: { label: string; value: string; active: boolean }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+      <div className="flex items-center gap-2">
+        <span className={cn("h-2.5 w-2.5 rounded-full", active ? "bg-emerald-300 shadow-[0_0_18px_rgba(52,211,153,0.8)]" : "bg-rose-300/70")} />
+        <span className="text-[10px] uppercase tracking-[0.24em] text-white/35">{label}</span>
+      </div>
+      <div className="mt-2 truncate text-sm font-medium text-white/75">{value}</div>
+    </div>
   );
 }
 

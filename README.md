@@ -31,6 +31,11 @@ Fresh monorepo for a powerful personal command center:
 
 The web app falls back to demo data when the API/database is offline, so the product UI can be reviewed immediately. Use the private session panel to create the first real account once the API and database are online.
 
+## Azure Ollama
+
+m.OS can verify the configured Azure Ollama runtime through `GET /api/llm/status`.
+See `ops/AZURE_OLLAMA.md` for Gemma 4 setup and model pull commands.
+
 ## Deployment Targets
 
 - Hostinger VPS: web/API reverse proxy and app runtime.

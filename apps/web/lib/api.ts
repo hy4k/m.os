@@ -59,6 +59,36 @@ export type AuthSession = {
   };
 };
 
+export type LlmStatus = {
+  azure: {
+    ok: boolean;
+    baseUrl: string;
+    version?: string;
+    latencyMs: number;
+    models: string[];
+    expectedModel?: string;
+    expectedModelInstalled?: boolean;
+    error?: string;
+  };
+  hostinger: {
+    ok: boolean;
+    baseUrl: string;
+    version?: string;
+    latencyMs: number;
+    models: string[];
+    expectedModel?: string;
+    expectedModelInstalled?: boolean;
+    error?: string;
+  };
+  routes: Array<{
+    policy: string;
+    provider: string;
+    model: string;
+    baseUrl: string;
+  }>;
+  cloudFallbackConfigured: boolean;
+};
+
 export function getStoredSession(): AuthSession | null {
   if (typeof window === "undefined") {
     return null;
@@ -136,6 +166,10 @@ export async function login(input: { email: string; password: string }) {
   });
   storeSession(session);
   return session;
+}
+
+export async function loadLlmStatus() {
+  return request<LlmStatus>("/api/llm/status");
 }
 
 export async function createProject(input: Pick<Project, "name" | "description" | "platform">) {

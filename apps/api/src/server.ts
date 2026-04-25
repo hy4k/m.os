@@ -6,7 +6,7 @@ import { z } from "zod";
 import { env } from "./config.js";
 import { query } from "./db.js";
 import { decryptSecret, encryptSecret, hashPassword, verifyPassword } from "./security.js";
-import { embedText, runCompletion } from "./llm.js";
+import { embedText, llmRoutes, ollamaStatus, runCompletion } from "./llm.js";
 
 const app = Fastify({ logger: true });
 await app.register(cors, { origin: true, credentials: true });
@@ -89,6 +89,20 @@ async function signSession(user: { id: string; email: string; display_name: stri
 }
 
 app.get("/health", async () => ({ ok: true, env: env.NODE_ENV }));
+
+app.get("/api/llm/status", async () => {
+  const [azure, hostinger] = await Promise.all([
+    ollamaStatus(env.AZURE_OLLAMA_BASE_URL, env.AZURE_OLLAMA_MODEL),
+    ollamaStatus(env.HOSTINGER_OLLAMA_BASE_URL, env.HOSTINGER_OLLAMA_MODEL)
+  ]);
+
+  return {
+    azure,
+    hostinger,
+    routes: llmRoutes(),
+    cloudFallbackConfigured: Boolean(env.CLOUD_LLM_BASE_URL && env.CLOUD_LLM_MODEL)
+  };
+});
 
 app.post("/api/auth/dev-login", async (request) => {
   const body = z.object({
