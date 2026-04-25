@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState, useTransition } from "react";
+import { FormEvent, useEffect, useMemo, useState, useTransition, type Dispatch, type SetStateAction } from "react";
 import {
   Activity,
   BrainCircuit,
@@ -32,11 +32,16 @@ import {
   askAssistant,
   clearSession,
   createCredential,
+  createDeploymentNote,
   createDiary,
   createNote,
+  createPlatformConnection,
   createProject,
+  createProjectEnvironment,
   createTodo,
   getStoredSession,
+  importGithubRepos,
+  loadCommandCenter,
   loadLlmStatus,
   login,
   register,
@@ -144,6 +149,7 @@ export function CommandCenter({ initialData, live }: Props) {
   const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [authMessage, setAuthMessage] = useState("Sign in to write into your private workspace.");
+  const [opsMessage, setOpsMessage] = useState("");
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -248,6 +254,19 @@ export function CommandCenter({ initialData, live }: Props) {
     setAuthMessage("Signed out. Preview mode is still available.");
   }
 
+  function refreshCommandData() {
+    if (!live) {
+      return;
+    }
+    startTransition(async () => {
+      try {
+        setData(await loadCommandCenter());
+      } catch {
+        setOpsMessage("Could not refresh from API.");
+      }
+    });
+  }
+
   return (
     <main className="relative min-h-screen overflow-hidden px-4 py-5 sm:px-6 lg:px-8">
       <div className="grain" />
@@ -317,6 +336,16 @@ export function CommandCenter({ initialData, live }: Props) {
           <IntelligenceGrid data={data} />
         </div>
         <ProjectIntelligence data={data} />
+        <OperationsCommandStrip
+          data={data}
+          live={live}
+          message={opsMessage}
+          onMessage={setOpsMessage}
+          pending={isPending}
+          onRefresh={refreshCommandData}
+          startTransition={startTransition}
+          onDataPatch={setData}
+        />
         <OperationsDeck data={data} />
       </section>
     </main>
@@ -827,6 +856,390 @@ function ProjectIntelligence({ data }: { data: CommandCenterData }) {
         </div>
       </div>
     </section>
+  );
+}
+
+function OperationsCommandStrip(props: {
+  data: CommandCenterData;
+  live: boolean;
+  message: string;
+  onMessage: (value: string) => void;
+  pending: boolean;
+  onRefresh: () => void;
+  startTransition: (fn: () => void | Promise<void>) => void;
+  onDataPatch: Dispatch<SetStateAction<CommandCenterData>>;
+}) {
+  const { data, live, onMessage, onRefresh, startTransition, onDataPatch } = props;
+  const githubCreds = useMemo(
+    () => data.credentials.filter((c) => c.kind === "github_pat"),
+    [data.credentials]
+  );
+
+  function addDemoItem<K extends keyof CommandCenterData>(kind: K, item: CommandCenterData[K][number]) {
+    onDataPatch((current) => ({
+      ...current,
+      [kind]: [item, ...(current[kind] as CommandCenterData[K])]
+    }));
+  }
+
+  return (
+    <div className="space-y-4">
+      {props.message && (
+        <p className="text-sm text-cyan-100/50">{props.message}</p>
+      )}
+      <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
+        <form
+          className="glass-panel space-y-3 rounded-3xl p-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const fd = new FormData(e.currentTarget);
+            const projectId = String(fd.get("conn_project_id") ?? "").trim();
+            const label = String(fd.get("conn_label") ?? "").trim();
+            const baseUrl = String(fd.get("conn_base_url") ?? "").trim();
+            const provider = String(fd.get("conn_provider") ?? "other") as PlatformConnection["provider"];
+            if (!label) {
+              onMessage("Add a label for the connection.");
+              return;
+            }
+            startTransition(async () => {
+              try {
+                if (live) {
+                  await createPlatformConnection({
+                    project_id: projectId || undefined,
+                    label,
+                    base_url: baseUrl || undefined,
+                    provider: provider as never,
+                    status: "manual"
+                  });
+                  onMessage("Connection saved.");
+                  onRefresh();
+                } else {
+                  const p = data.projects.find((x) => x.id === projectId);
+                  addDemoItem("platformConnections", {
+                    id: `local-conn-${Date.now()}`,
+                    project_id: projectId || undefined,
+                    project_name: p?.name,
+                    label,
+                    base_url: baseUrl || undefined,
+                    provider: provider as never,
+                    status: "manual"
+                  });
+                  onMessage("Preview: connection added locally.");
+                }
+                e.currentTarget.reset();
+              } catch (err) {
+                onMessage(err instanceof Error ? err.message : "Could not save connection.");
+              }
+            });
+          }}
+        >
+          <p className="text-[10px] uppercase tracking-[0.3em] text-white/30">Add connection</p>
+          <p className="text-xs text-white/45">Link a project to a platform (no secrets in this form).</p>
+          <select name="conn_project_id" className="command-input w-full rounded-2xl px-3 py-2 text-sm text-white">
+            <option value="">Project (optional)</option>
+            {data.projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          <select
+            name="conn_provider"
+            className="command-input w-full rounded-2xl px-3 py-2 text-sm text-white"
+            defaultValue="github"
+          >
+            <option value="github">GitHub</option>
+            <option value="supabase">Supabase</option>
+            <option value="azure">Azure</option>
+            <option value="hostinger">Hostinger</option>
+            <option value="google_ai_studio">Google AI Studio</option>
+            <option value="cursor">Cursor</option>
+            <option value="openclaw">OpenClaw</option>
+            <option value="other">Other</option>
+          </select>
+          <input name="conn_label" required placeholder="Label" className="command-input w-full rounded-2xl px-3 py-2 text-sm text-white" />
+          <input name="conn_base_url" placeholder="Base URL" className="command-input w-full rounded-2xl px-3 py-2 text-sm text-white" />
+          <button
+            type="submit"
+            disabled={props.pending}
+            className="w-full rounded-2xl bg-white px-3 py-2 text-xs font-bold uppercase tracking-[0.14em] text-black"
+          >
+            Save connection
+          </button>
+        </form>
+
+        <form
+          className="glass-panel space-y-3 rounded-3xl p-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const fd = new FormData(e.currentTarget);
+            const projectId = String(fd.get("env_project_id") ?? "");
+            const name = String(fd.get("env_name") ?? "").trim();
+            if (!projectId || !name) {
+              onMessage("Environment needs a project and a name.");
+              return;
+            }
+            const url = String(fd.get("env_url") ?? "").trim();
+            const runtime = String(fd.get("env_runtime") ?? "").trim();
+            const region = String(fd.get("env_region") ?? "").trim();
+            const status = String(fd.get("env_status") ?? "unknown");
+            const project = data.projects.find((p) => p.id === projectId);
+            startTransition(async () => {
+              try {
+                if (live) {
+                  await createProjectEnvironment({
+                    project_id: projectId,
+                    name,
+                    url: url || undefined,
+                    runtime: runtime || undefined,
+                    region: region || undefined,
+                    status: status as never
+                  });
+                  onMessage("Environment saved.");
+                  onRefresh();
+                } else {
+                  addDemoItem("environments", {
+                    id: `local-env-${Date.now()}`,
+                    project_id: projectId,
+                    project_name: project?.name,
+                    name,
+                    url: url || undefined,
+                    runtime: runtime || undefined,
+                    region: region || undefined,
+                    status: status as never
+                  });
+                  onMessage("Preview: environment added locally.");
+                }
+                e.currentTarget.reset();
+              } catch (err) {
+                onMessage(err instanceof Error ? err.message : "Could not save environment.");
+              }
+            });
+          }}
+        >
+          <p className="text-[10px] uppercase tracking-[0.3em] text-white/30">Environment</p>
+          <p className="text-xs text-white/45">Staging, production, or a named stack.</p>
+          <select name="env_project_id" required className="command-input w-full rounded-2xl px-3 py-2 text-sm text-white">
+            <option value="">Project *</option>
+            {data.projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          <input name="env_name" required placeholder="Name (e.g. staging)" className="command-input w-full rounded-2xl px-3 py-2 text-sm text-white" />
+          <input name="env_url" placeholder="URL" className="command-input w-full rounded-2xl px-3 py-2 text-sm text-white" />
+          <div className="grid grid-cols-2 gap-2">
+            <input name="env_runtime" placeholder="Runtime" className="command-input w-full rounded-2xl px-3 py-2 text-sm text-white" />
+            <input name="env_region" placeholder="Region" className="command-input w-full rounded-2xl px-3 py-2 text-sm text-white" />
+          </div>
+          <select name="env_status" className="command-input w-full rounded-2xl px-3 py-2 text-sm text-white" defaultValue="unknown">
+            <option value="unknown">unknown</option>
+            <option value="healthy">healthy</option>
+            <option value="degraded">degraded</option>
+            <option value="down">down</option>
+            <option value="paused">paused</option>
+          </select>
+          <button
+            type="submit"
+            disabled={props.pending}
+            className="w-full rounded-2xl bg-white px-3 py-2 text-xs font-bold uppercase tracking-[0.14em] text-black"
+          >
+            Save environment
+          </button>
+        </form>
+
+        <form
+          className="glass-panel space-y-3 rounded-3xl p-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const fd = new FormData(e.currentTarget);
+            const projectId = String(fd.get("dep_project_id") ?? "").trim();
+            const envId = String(fd.get("dep_env_id") ?? "").trim();
+            const title = String(fd.get("dep_title") ?? "").trim();
+            if (!title) {
+              onMessage("Deployment needs a title.");
+              return;
+            }
+            const summary = String(fd.get("dep_summary") ?? "").trim();
+            const depStatus = String(fd.get("dep_status") ?? "planned");
+            const versionRef = String(fd.get("dep_version") ?? "").trim();
+            const project = data.projects.find((p) => p.id === projectId);
+            const env = data.environments.find((x) => x.id === envId);
+            startTransition(async () => {
+              try {
+                if (live) {
+                  await createDeploymentNote({
+                    project_id: projectId || undefined,
+                    environment_id: envId || undefined,
+                    title,
+                    summary: summary || undefined,
+                    status: depStatus as never,
+                    version_ref: versionRef || undefined
+                  });
+                  onMessage("Deployment note saved.");
+                  onRefresh();
+                } else {
+                  addDemoItem("deploymentNotes", {
+                    id: `local-dep-${Date.now()}`,
+                    project_id: projectId || undefined,
+                    project_name: project?.name,
+                    environment_id: envId || undefined,
+                    environment_name: env?.name,
+                    title,
+                    summary: summary || undefined,
+                    status: depStatus as never,
+                    version_ref: versionRef || undefined
+                  });
+                  onMessage("Preview: deployment note added locally.");
+                }
+                e.currentTarget.reset();
+              } catch (err) {
+                onMessage(err instanceof Error ? err.message : "Could not save deployment note.");
+              }
+            });
+          }}
+        >
+          <p className="text-[10px] uppercase tracking-[0.3em] text-white/30">Deployment</p>
+          <p className="text-xs text-white/45">Release log entry for a project or environment.</p>
+          <select name="dep_project_id" className="command-input w-full rounded-2xl px-3 py-2 text-sm text-white">
+            <option value="">Project (optional)</option>
+            {data.projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          <select name="dep_env_id" className="command-input w-full rounded-2xl px-3 py-2 text-sm text-white">
+            <option value="">Environment (optional)</option>
+            {data.environments.map((x) => (
+              <option key={x.id} value={x.id}>
+                {x.project_name ?? "project"} / {x.name}
+              </option>
+            ))}
+          </select>
+          <input name="dep_title" required placeholder="Title" className="command-input w-full rounded-2xl px-3 py-2 text-sm text-white" />
+          <input name="dep_version" placeholder="Version / ref" className="command-input w-full rounded-2xl px-3 py-2 text-sm text-white" />
+          <input name="dep_summary" placeholder="Summary" className="command-input w-full rounded-2xl px-3 py-2 text-sm text-white" />
+          <select name="dep_status" className="command-input w-full rounded-2xl px-3 py-2 text-sm text-white" defaultValue="planned">
+            <option value="planned">planned</option>
+            <option value="running">running</option>
+            <option value="succeeded">succeeded</option>
+            <option value="failed">failed</option>
+            <option value="rolled_back">rolled_back</option>
+          </select>
+          <button
+            type="submit"
+            disabled={props.pending}
+            className="w-full rounded-2xl bg-white px-3 py-2 text-xs font-bold uppercase tracking-[0.14em] text-black"
+          >
+            Save note
+          </button>
+        </form>
+
+        <form
+          className="glass-panel space-y-3 rounded-3xl p-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const fd = new FormData(e.currentTarget);
+            const projectId = String(fd.get("gh_project_id") ?? "");
+            if (!projectId) {
+              onMessage("Select a m.OS project for these repos.");
+              return;
+            }
+            const token = String(fd.get("gh_token") ?? "").trim();
+            const storeToken = fd.get("gh_store") === "on";
+            const credentialId = String(fd.get("gh_credential_id") ?? "").trim();
+            const project = data.projects.find((p) => p.id === projectId);
+            startTransition(async () => {
+              try {
+                if (live) {
+                  const result = await importGithubRepos({
+                    project_id: projectId,
+                    token: token || undefined,
+                    credential_id: credentialId || undefined,
+                    store_token: storeToken
+                  });
+                  onMessage(
+                    `GitHub: added ${result.imported} repo link(s), skipped ${result.skipped} duplicate(s).`
+                  );
+                  onRefresh();
+                } else {
+                  addDemoItem("projectLinks", {
+                    id: `local-gh-${Date.now()}-1`,
+                    project_id: projectId,
+                    project_name: project?.name,
+                    link_type: "repo",
+                    link_label: "sample-repo",
+                    link_value: "https://github.com/example/sample-repo"
+                  });
+                  addDemoItem("projectLinks", {
+                    id: `local-gh-${Date.now()}-2`,
+                    project_id: projectId,
+                    project_name: project?.name,
+                    link_type: "repo",
+                    link_label: "demo-ui",
+                    link_value: "https://github.com/example/demo-ui"
+                  });
+                  addDemoItem("platformConnections", {
+                    id: `local-gh-conn-${Date.now()}`,
+                    project_id: projectId,
+                    project_name: project?.name,
+                    provider: "github",
+                    label: "GitHub",
+                    base_url: "https://github.com",
+                    status: "connected"
+                  });
+                  onMessage("Preview: sample GitHub links added (no network).");
+                }
+                e.currentTarget.reset();
+              } catch (err) {
+                onMessage(err instanceof Error ? err.message : "GitHub import failed.");
+              }
+            });
+          }}
+        >
+          <p className="text-[10px] uppercase tracking-[0.3em] text-white/30">GitHub</p>
+          <p className="text-xs text-white/45">Import your repos as project links. Fine-grained PAT: repo read.</p>
+          <select name="gh_project_id" required className="command-input w-full rounded-2xl px-3 py-2 text-sm text-white">
+            <option value="">Project *</option>
+            {data.projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          {githubCreds.length > 0 && (
+            <select name="gh_credential_id" className="command-input w-full rounded-2xl px-3 py-2 text-sm text-white" defaultValue="">
+              <option value="">Use saved github_pat (optional)</option>
+              {githubCreds.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          )}
+          <input
+            name="gh_token"
+            type="password"
+            autoComplete="off"
+            placeholder="PAT, or use saved credential / server GITHUB_TOKEN"
+            className="command-input w-full rounded-2xl px-3 py-2 text-sm text-white"
+          />
+          <label className="flex items-center gap-2 text-xs text-white/50">
+            <input name="gh_store" type="checkbox" className="rounded border-white/20" />
+            Store PAT as credential (github_pat)
+          </label>
+          <button
+            type="submit"
+            disabled={props.pending}
+            className="w-full rounded-2xl bg-cyan-100 px-3 py-2 text-xs font-bold uppercase tracking-[0.14em] text-black"
+          >
+            Import GitHub repos
+          </button>
+        </form>
+      </div>
+    </div>
   );
 }
 

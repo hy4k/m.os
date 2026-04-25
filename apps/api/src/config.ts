@@ -18,7 +18,9 @@ const envSchema = z.object({
   CLOUD_LLM_BASE_URL: z.string().optional(),
   CLOUD_LLM_API_KEY: z.string().optional(),
   CLOUD_LLM_MODEL: z.string().optional(),
-  OLLAMA_EMBEDDING_MODEL: z.string().default("nomic-embed-text")
+  OLLAMA_EMBEDDING_MODEL: z.string().default("nomic-embed-text"),
+  /** Optional: server-wide GitHub PAT for import if user does not supply a credential. Prefer per-user stored PAT. */
+  GITHUB_TOKEN: z.string().optional()
 });
 
 export const env = envSchema.parse(process.env);

@@ -284,6 +284,61 @@ export async function createPlayground(input: Pick<Playground, "project_id" | "t
   });
 }
 
+export async function createPlatformConnection(input: {
+  account_id?: string;
+  project_id?: string;
+  provider: PlatformConnection["provider"];
+  label: string;
+  base_url?: string;
+  status?: PlatformConnection["status"];
+  metadata?: Record<string, unknown>;
+}) {
+  return request<{ id: string }>("/api/platform-connections", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function createProjectEnvironment(input: {
+  project_id: string;
+  name: string;
+  url?: string;
+  runtime?: string;
+  region?: string;
+  status?: ProjectEnvironment["status"];
+}) {
+  return request<{ id: string }>("/api/environments", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function createDeploymentNote(input: {
+  project_id?: string;
+  environment_id?: string;
+  title: string;
+  summary?: string;
+  status?: DeploymentNote["status"];
+  version_ref?: string;
+}) {
+  return request<{ id: string }>("/api/deployment-notes", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function importGithubRepos(input: {
+  project_id: string;
+  credential_id?: string;
+  token?: string;
+  store_token?: boolean;
+}) {
+  return request<{ imported: number; skipped: number; link_ids: string[] }>("/api/connectors/github/import-repos", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
 export async function createNote(input: Pick<KnowledgeItem, "title" | "content" | "kind">) {
   return request<{ id: string }>("/api/notes", {
     method: "POST",

@@ -6,6 +6,8 @@ import { z } from "zod";
 import { env } from "./config.js";
 import { query } from "./db.js";
 import { decryptSecret, encryptSecret, hashPassword, verifyPassword } from "./security.js";
+import { buildAssistantContext } from "./assistant-context.js";
+import { fetchUserRepos } from "./github.js";
 import { embedText, llmRoutes, ollamaStatus, runCompletion } from "./llm.js";
 
 const app = Fastify({ logger: true });
@@ -435,6 +437,120 @@ app.post("/api/deployment-notes", async (request, reply) => {
   return reply.code(201).send({ id: rows[0]?.id });
 });
 
+app.post("/api/connectors/github/import-repos", async (request, reply) => {
+  const userId = getUserId(request.headers as Record<string, unknown>);
+  const body = z
+    .object({
+      project_id: z.string().uuid(),
+      credential_id: z.string().uuid().optional(),
+      token: z.string().min(1).optional(),
+      store_token: z.boolean().default(false)
+    })
+    .parse(request.body);
+
+  const projectRows = await query<{ id: string }>(
+    `select id from projects where id = $1 and user_id = $2`,
+    [body.project_id, userId]
+  );
+  if (!projectRows[0]) {
+    throw app.httpErrors.notFound("Project not found");
+  }
+
+  let pat = body.token?.trim() ?? "";
+  if (body.credential_id) {
+    const cred = await query<{ secret_ciphertext: string; kind: string }>(
+      `select secret_ciphertext, kind from credentials where id = $1 and user_id = $2`,
+      [body.credential_id, userId]
+    );
+    if (!cred[0]) {
+      throw app.httpErrors.notFound("Credential not found");
+    }
+    if (cred[0].kind !== "github_pat") {
+      throw app.httpErrors.badRequest("Credential must have kind github_pat");
+    }
+    pat = decryptSecret(cred[0].secret_ciphertext);
+  } else if (!pat && env.GITHUB_TOKEN) {
+    pat = env.GITHUB_TOKEN;
+  }
+
+  if (!pat) {
+    throw app.httpErrors.badRequest("Provide a GitHub token, credential_id (github_pat), or set GITHUB_TOKEN on the server");
+  }
+
+  const repos = await fetchUserRepos(pat);
+
+  if (body.token && body.store_token) {
+    const encrypted = encryptSecret(pat);
+    await query(
+      `insert into credentials (user_id, project_id, label, kind, secret_ciphertext)
+       values ($1, $2, $3, $4, $5)`,
+      [userId, body.project_id, "GitHub PAT", "github_pat", encrypted]
+    );
+  }
+  let imported = 0;
+  let skipped = 0;
+  const linkIds: string[] = [];
+
+  for (const repo of repos) {
+    const existing = await query<{ id: string }>(
+      `select id from project_links
+       where user_id = $1 and project_id = $2 and link_value = $3
+       limit 1`,
+      [userId, body.project_id, repo.html_url]
+    );
+    if (existing[0]) {
+      skipped += 1;
+      continue;
+    }
+    const inserted = await query<{ id: string }>(
+      `insert into project_links (user_id, project_id, link_type, link_label, link_value, metadata)
+       values ($1, $2, 'repo', $3, $4, $5)
+       returning id`,
+      [
+        userId,
+        body.project_id,
+        repo.name,
+        repo.html_url,
+        JSON.stringify({
+          source: "github",
+          default_branch: repo.default_branch,
+          description: repo.description
+        })
+      ]
+    );
+    if (inserted[0]) {
+      imported += 1;
+      linkIds.push(inserted[0].id);
+    }
+  }
+
+  const existingConn = await query<{ id: string }>(
+    `select id from platform_connections
+     where user_id = $1 and project_id = $2 and provider = 'github'
+     limit 1`,
+    [userId, body.project_id]
+  );
+  const connectionMeta = JSON.stringify({ last_import: new Date().toISOString(), imported, skipped });
+  if (existingConn[0]) {
+    await query(
+      `update platform_connections
+       set status = 'connected', updated_at = now(), last_checked_at = now(), metadata = metadata || $2::jsonb
+       where id = $1`,
+      [existingConn[0].id, connectionMeta]
+    );
+  } else {
+    await query(
+      `insert into platform_connections (user_id, project_id, provider, label, base_url, status, metadata)
+       values ($1, $2, 'github', 'GitHub', 'https://github.com', 'connected', $3::jsonb)`,
+      [userId, body.project_id, connectionMeta]
+    );
+  }
+
+  await audit(userId, "github.import_repos", "project", body.project_id, { imported, skipped });
+
+  return { imported, skipped, link_ids: linkIds };
+});
+
 app.get("/api/notes", async (request) => {
   const userId = getUserId(request.headers as Record<string, unknown>);
   return query(
@@ -585,14 +701,7 @@ app.post("/api/assistant/chat", async (request) => {
     policy: z.enum(["private-fast", "coding", "deep-reasoning", "summarize", "embed", "vision-doc-analysis"]).default("coding")
   }).parse(request.body);
 
-  const contextRows = await query<{ title: string; content: string }>(
-    `select title, content from knowledge_items
-     where user_id = $1
-     order by updated_at desc
-     limit 12`,
-    [userId]
-  );
-  const context = contextRows.map((r) => `# ${r.title}\n${r.content}`).join("\n\n");
+  const context = await buildAssistantContext(userId);
   const completion = await runCompletion({ policy: body.policy, prompt: body.prompt, context });
 
   await query(
