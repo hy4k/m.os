@@ -1,7 +1,9 @@
 import crypto from "node:crypto";
+import { promisify } from "node:util";
 import { env } from "./config.js";
 
 const ALGO = "aes-256-gcm";
+const scryptAsync = promisify(crypto.scrypt);
 
 function getMasterKey(): Buffer {
   if (!env.MASTER_ENCRYPTION_KEY_BASE64) {
@@ -34,4 +36,22 @@ export function redactSecrets(input: string): string {
   return input
     .replace(/(api[_-]?key|token|password|secret)\s*[:=]\s*["']?([^\s"']+)/gi, "$1: [REDACTED]")
     .replace(/sk-[a-zA-Z0-9]{16,}/g, "[REDACTED_KEY]");
+}
+
+export async function hashPassword(password: string): Promise<string> {
+  const salt = crypto.randomBytes(16);
+  const derived = await scryptAsync(password, salt, 64) as Buffer;
+  return `scrypt$${salt.toString("base64")}$${derived.toString("base64")}`;
+}
+
+export async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
+  const [scheme, saltBase64, hashBase64] = storedHash.split("$");
+  if (scheme !== "scrypt" || !saltBase64 || !hashBase64) {
+    return false;
+  }
+
+  const salt = Buffer.from(saltBase64, "base64");
+  const expected = Buffer.from(hashBase64, "base64");
+  const actual = await scryptAsync(password, salt, expected.length) as Buffer;
+  return crypto.timingSafeEqual(actual, expected);
 }

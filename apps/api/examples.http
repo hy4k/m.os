@@ -1,6 +1,25 @@
 ### Health
 GET http://localhost:4000/health
 
+### Register
+POST http://localhost:4000/api/auth/register
+Content-Type: application/json
+
+{
+  "email": "owner@personal-os.local",
+  "password": "change-this-password",
+  "display_name": "Midhun"
+}
+
+### Login
+POST http://localhost:4000/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "owner@personal-os.local",
+  "password": "change-this-password"
+}
+
 ### Create project
 POST http://localhost:4000/api/projects
 Content-Type: application/json

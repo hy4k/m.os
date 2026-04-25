@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState, useTransition } from "react";
+import { FormEvent, useEffect, useMemo, useState, useTransition } from "react";
 import {
   Activity,
   BrainCircuit,
@@ -30,11 +30,16 @@ import {
 } from "lucide-react";
 import {
   askAssistant,
+  clearSession,
   createCredential,
   createDiary,
   createNote,
   createProject,
   createTodo,
+  getStoredSession,
+  login,
+  register,
+  type AuthSession,
   type AuditEvent,
   type Credential,
   type DiaryEntry,
@@ -123,7 +128,14 @@ export function CommandCenter({ initialData, live }: Props) {
   const [assistantResponse, setAssistantResponse] = useState("Ask me anything about your projects, vault, diary, goals, todos, or next moves.");
   const [prompt, setPrompt] = useState("What should I focus on next across my projects and life OS?");
   const [activeComposer, setActiveComposer] = useState<"project" | "note" | "todo" | "diary" | "credential">("note");
+  const [session, setSession] = useState<AuthSession | null>(null);
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [authMessage, setAuthMessage] = useState("Sign in to write into your private workspace.");
   const [isPending, startTransition] = useTransition();
+
+  useEffect(() => {
+    setSession(getStoredSession());
+  }, []);
 
   const stats = useMemo(() => [
     { label: "Projects", value: data.projects.length, icon: Network },
@@ -193,6 +205,33 @@ export function CommandCenter({ initialData, live }: Props) {
     });
   }
 
+  async function submitAuth(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const email = String(form.get("email") ?? "");
+    const password = String(form.get("password") ?? "");
+    const display_name = String(form.get("display_name") ?? "");
+
+    setAuthMessage("Opening private session...");
+    startTransition(async () => {
+      try {
+        const nextSession = authMode === "register"
+          ? await register({ email, password, display_name: display_name || undefined })
+          : await login({ email, password });
+        setSession(nextSession);
+        setAuthMessage(`Signed in as ${nextSession.user.email}`);
+      } catch (error) {
+        setAuthMessage(error instanceof Error ? error.message : "Authentication failed");
+      }
+    });
+  }
+
+  function signOut() {
+    clearSession();
+    setSession(null);
+    setAuthMessage("Signed out. Preview mode is still available.");
+  }
+
   return (
     <main className="relative min-h-screen overflow-hidden px-4 py-5 sm:px-6 lg:px-8">
       <div className="grain" />
@@ -200,6 +239,15 @@ export function CommandCenter({ initialData, live }: Props) {
 
       <section className="relative z-10 mx-auto flex max-w-[96rem] flex-col gap-6">
         <BrandHeader live={live} />
+        <SessionConsole
+          mode={authMode}
+          message={authMessage}
+          pending={isPending}
+          session={session}
+          onModeChange={setAuthMode}
+          onSubmit={submitAuth}
+          onSignOut={signOut}
+        />
         <Hero />
         <PlatformConstellation />
 
@@ -302,6 +350,58 @@ function LogoMark() {
       <div className="font-display text-3xl font-bold tracking-tighter text-white">m</div>
       <div className="absolute bottom-3 right-3 h-2 w-2 rounded-full bg-violet-300" />
     </div>
+  );
+}
+
+function SessionConsole(props: {
+  mode: "login" | "register";
+  message: string;
+  pending: boolean;
+  session: AuthSession | null;
+  onModeChange: (mode: "login" | "register") => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onSignOut: () => void;
+}) {
+  return (
+    <section className="glass-panel relative overflow-hidden rounded-[2rem] p-5">
+      <div className="absolute -right-16 -top-16 h-40 w-40 rounded-full bg-emerald-300/10 blur-3xl" />
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.35em] text-white/30">Private Session</p>
+          <h2 className="mt-1 font-display text-3xl text-white">
+            {props.session ? props.session.user.email : "Unlock m.OS"}
+          </h2>
+          <p className="mt-2 text-sm text-white/42">{props.message}</p>
+        </div>
+        {props.session ? (
+          <button
+            type="button"
+            onClick={props.onSignOut}
+            className="rounded-2xl border border-white/10 bg-white/[0.04] px-5 py-3 text-sm text-white/65 transition hover:bg-white/[0.08]"
+          >
+            Lock Session
+          </button>
+        ) : (
+          <form onSubmit={props.onSubmit} className="grid flex-1 gap-3 lg:max-w-4xl lg:grid-cols-[1fr_1fr_1fr_auto]">
+            {props.mode === "register" && (
+              <input name="display_name" placeholder="Name" className="command-input rounded-2xl px-4 py-3 text-white" />
+            )}
+            <input name="email" type="email" required placeholder="Email" className="command-input rounded-2xl px-4 py-3 text-white" />
+            <input name="password" type="password" required minLength={props.mode === "register" ? 10 : 1} placeholder="Password" className="command-input rounded-2xl px-4 py-3 text-white" />
+            <button disabled={props.pending} className="rounded-2xl bg-white px-5 py-3 text-sm font-bold uppercase tracking-[0.18em] text-black transition hover:bg-cyan-100">
+              {props.mode === "register" ? "Create" : "Unlock"}
+            </button>
+            <button
+              type="button"
+              onClick={() => props.onModeChange(props.mode === "login" ? "register" : "login")}
+              className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-xs uppercase tracking-[0.18em] text-white/50 transition hover:text-white lg:col-span-4"
+            >
+              {props.mode === "login" ? "Create first account" : "Use existing account"}
+            </button>
+          </form>
+        )}
+      </div>
+    </section>
   );
 }
 

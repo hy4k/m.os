@@ -21,12 +21,15 @@ Fresh monorepo for a powerful personal command center:
    - `cp .env.example .env`
 2. Install deps:
    - `npm install`
-3. Run API in dev mode:
+3. Prepare database:
+   - `npm run db:migrate`
+   - `npm run db:seed`
+4. Run API in dev mode:
    - `npm run dev:api`
-4. Run the web app:
+5. Run the web app:
    - `npm run dev:web`
 
-The web app falls back to demo data when the API/database is offline, so the product UI can be reviewed immediately.
+The web app falls back to demo data when the API/database is offline, so the product UI can be reviewed immediately. Use the private session panel to create the first real account once the API and database are online.
 
 ## Deployment Targets
 

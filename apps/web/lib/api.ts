@@ -1,6 +1,7 @@
 export const OWNER_ID = "00000000-0000-0000-0000-000000000001";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
+const SESSION_KEY = "mos_session";
 
 export type Project = {
   id: string;
@@ -49,14 +50,55 @@ export type AuditEvent = {
   created_at: string;
 };
 
+export type AuthSession = {
+  token: string;
+  user: {
+    id: string;
+    email: string;
+    display_name: string | null;
+  };
+};
+
+export function getStoredSession(): AuthSession | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const raw = window.localStorage.getItem(SESSION_KEY);
+  if (!raw) {
+    return null;
+  }
+  try {
+    return JSON.parse(raw) as AuthSession;
+  } catch {
+    window.localStorage.removeItem(SESSION_KEY);
+    return null;
+  }
+}
+
+export function storeSession(session: AuthSession) {
+  window.localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+}
+
+export function clearSession() {
+  window.localStorage.removeItem(SESSION_KEY);
+}
+
+function authHeaders() {
+  const session = getStoredSession();
+  if (session?.token) {
+    return { Authorization: `Bearer ${session.token}` };
+  }
+  return { "x-user-id": OWNER_ID };
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  headers.set("Content-Type", "application/json");
+  Object.entries(authHeaders()).forEach(([key, value]) => headers.set(key, value));
+
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      "x-user-id": OWNER_ID,
-      ...(init?.headers ?? {})
-    },
+    headers,
     cache: "no-store"
   });
   if (!response.ok) {
@@ -76,6 +118,24 @@ export async function loadCommandCenter() {
   ]);
 
   return { projects, notes, diary, todos, credentials, audit };
+}
+
+export async function register(input: { email: string; password: string; display_name?: string }) {
+  const session = await request<AuthSession>("/api/auth/register", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+  storeSession(session);
+  return session;
+}
+
+export async function login(input: { email: string; password: string }) {
+  const session = await request<AuthSession>("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+  storeSession(session);
+  return session;
 }
 
 export async function createProject(input: Pick<Project, "name" | "description" | "platform">) {

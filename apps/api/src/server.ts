@@ -5,7 +5,7 @@ import jwt from "@fastify/jwt";
 import { z } from "zod";
 import { env } from "./config.js";
 import { query } from "./db.js";
-import { decryptSecret, encryptSecret } from "./security.js";
+import { decryptSecret, encryptSecret, hashPassword, verifyPassword } from "./security.js";
 import { embedText, runCompletion } from "./llm.js";
 
 const app = Fastify({ logger: true });
@@ -72,6 +72,22 @@ async function safeEmbedding(input: string): Promise<number[]> {
   return Array.from({ length: 768 }, () => 0);
 }
 
+async function signSession(user: { id: string; email: string; display_name: string | null }) {
+  const token = await app.jwt.sign({
+    sub: user.id,
+    email: user.email,
+    name: user.display_name
+  });
+  return {
+    token,
+    user: {
+      id: user.id,
+      email: user.email,
+      display_name: user.display_name
+    }
+  };
+}
+
 app.get("/health", async () => ({ ok: true, env: env.NODE_ENV }));
 
 app.post("/api/auth/dev-login", async (request) => {
@@ -84,6 +100,61 @@ app.post("/api/auth/dev-login", async (request) => {
     email: body.email
   });
   return { token };
+});
+
+app.post("/api/auth/register", async (request, reply) => {
+  const body = z.object({
+    email: z.string().email(),
+    password: z.string().min(10),
+    display_name: z.string().min(1).optional()
+  }).parse(request.body);
+
+  const passwordHash = await hashPassword(body.password);
+  const rows = await query<{ id: string; email: string; display_name: string | null }>(
+    `insert into users (email, display_name, password_hash)
+     values ($1, $2, $3)
+     returning id, email, display_name`,
+    [body.email.toLowerCase(), body.display_name ?? null, passwordHash]
+  );
+  await audit(rows[0].id, "auth.register", "user", rows[0].id, { email: rows[0].email });
+  return reply.code(201).send(await signSession(rows[0]));
+});
+
+app.post("/api/auth/login", async (request) => {
+  const body = z.object({
+    email: z.string().email(),
+    password: z.string().min(1)
+  }).parse(request.body);
+
+  const rows = await query<{ id: string; email: string; display_name: string | null; password_hash: string | null }>(
+    `select id, email, display_name, password_hash
+     from users
+     where email = $1
+     limit 1`,
+    [body.email.toLowerCase()]
+  );
+  const user = rows[0];
+  if (!user?.password_hash || !(await verifyPassword(body.password, user.password_hash))) {
+    throw app.httpErrors.unauthorized("Invalid email or password");
+  }
+
+  await audit(user.id, "auth.login", "user", user.id);
+  return signSession(user);
+});
+
+app.get("/api/auth/me", async (request) => {
+  const userId = getUserId(request.headers as Record<string, unknown>);
+  const rows = await query<{ id: string; email: string; display_name: string | null; created_at: string }>(
+    `select id, email, display_name, created_at
+     from users
+     where id = $1
+     limit 1`,
+    [userId]
+  );
+  if (!rows[0]) {
+    throw app.httpErrors.notFound("User not found");
+  }
+  return rows[0];
 });
 
 app.get("/api/projects", async (request) => {
