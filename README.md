@@ -1,0 +1,35 @@
+# Personal LLM OS
+
+Fresh monorepo for a powerful personal command center:
+- project intelligence
+- secure credentials vault
+- diary, notes, ideas, todos, goals, contacts
+- LLM assistant with Azure Ollama plus cloud fallback
+
+## Monorepo Layout
+
+- `apps/web`: future web client
+- `apps/api`: API backend (MVP implemented)
+- `services/llm-gateway`: LLM provider routing logic
+- `services/workers`: background jobs placeholder
+- `packages/db`: SQL schema and migrations
+- `ops`: deployment and backup assets
+
+## Quick Start
+
+1. Copy env:
+   - `cp .env.example .env`
+2. Install deps:
+   - `npm install`
+3. Run API in dev mode:
+   - `npm run dev:api`
+4. Run the web app:
+   - `npm run dev:web`
+
+The web app falls back to demo data when the API/database is offline, so the product UI can be reviewed immediately.
+
+## Deployment Targets
+
+- Hostinger VPS: web/API reverse proxy and app runtime.
+- Azure: Ollama runtime for stronger local models.
+- Optional cloud model fallback for quality-first responses.

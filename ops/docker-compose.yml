@@ -1,0 +1,46 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: pllos-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: personal_llm_os
+    ports:
+      - "5432:5432"
+    volumes:
+      - pllos_postgres_data:/var/lib/postgresql/data
+
+  api:
+    image: node:20-alpine
+    container_name: pllos-api
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -w apps/api"
+    env_file:
+      - ../.env
+    ports:
+      - "4000:4000"
+    volumes:
+      - ..:/app
+    depends_on:
+      - postgres
+
+  web:
+    image: node:20-alpine
+    container_name: pllos-web
+    working_dir: /app
+    command: sh -c "npm install && npm run dev:web"
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://api:4000
+    ports:
+      - "3000:3000"
+    volumes:
+      - ..:/app
+    depends_on:
+      - api
+
+volumes:
+  pllos_postgres_data:

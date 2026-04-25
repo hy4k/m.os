@@ -1,0 +1,45 @@
+### Health
+GET http://localhost:4000/health
+
+### Create project
+POST http://localhost:4000/api/projects
+Content-Type: application/json
+x-user-id: 00000000-0000-0000-0000-000000000001
+
+{
+  "name": "noteos platform evolution",
+  "description": "Main personal command center project",
+  "platform": "hostinger+azure"
+}
+
+### Add note
+POST http://localhost:4000/api/notes
+Content-Type: application/json
+x-user-id: 00000000-0000-0000-0000-000000000001
+
+{
+  "title": "new product idea",
+  "content": "Agentic vault for all projects and life goals",
+  "kind": "idea"
+}
+
+### Add credential
+POST http://localhost:4000/api/credentials
+Content-Type: application/json
+x-user-id: 00000000-0000-0000-0000-000000000001
+
+{
+  "label": "github token",
+  "kind": "api_key",
+  "secret": "ghp_example_secret"
+}
+
+### Assistant chat
+POST http://localhost:4000/api/assistant/chat
+Content-Type: application/json
+x-user-id: 00000000-0000-0000-0000-000000000001
+
+{
+  "policy": "coding",
+  "prompt": "Summarize my current active projects and next 3 actions."
+}
