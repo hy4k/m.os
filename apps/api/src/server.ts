@@ -696,12 +696,53 @@ app.post("/api/search", async (request) => {
 
 app.post("/api/assistant/chat", async (request) => {
   const userId = getUserId(request.headers as Record<string, unknown>);
-  const body = z.object({
-    prompt: z.string().min(1),
-    policy: z.enum(["private-fast", "coding", "deep-reasoning", "summarize", "embed", "vision-doc-analysis"]).default("coding")
-  }).parse(request.body);
+  const body = z
+    .object({
+      prompt: z.string().min(1),
+      policy: z.enum(["private-fast", "coding", "deep-reasoning", "summarize", "embed", "vision-doc-analysis"]).default("coding"),
+      include_rag: z.boolean().default(true),
+      rag_limit: z.coerce.number().int().min(1).max(20).default(8)
+    })
+    .parse(request.body);
 
-  const context = await buildAssistantContext(userId);
+  let ragSources: Array<{ id: string; kind: string; title: string; similarity: number }> = [];
+  let ragBlock = "";
+  if (body.include_rag) {
+    const embedding = await safeEmbedding(body.prompt);
+    const ragRows = await query<{
+      id: string;
+      kind: string;
+      title: string;
+      content: string;
+      similarity: string;
+    }>(
+      `select id, kind, title, content,
+              (1 - (embedding <=> $2::vector))::float8 as similarity
+       from knowledge_items
+       where user_id = $1
+       order by embedding <=> $2::vector
+       limit $3`,
+      [userId, `[${embedding.join(",")}]`, body.rag_limit]
+    );
+    ragSources = ragRows.map((r) => ({
+      id: r.id,
+      kind: r.kind,
+      title: r.title,
+      similarity: Number(r.similarity)
+    }));
+    if (ragRows.length) {
+      ragBlock = `## Semantic matches for this question (vector search)
+${ragRows
+  .map(
+    (r) =>
+      `### ${r.kind}: ${r.title} (relevance: ${Number(r.similarity).toFixed(3)})\n${r.content}`
+  )
+  .join("\n\n")}`;
+    }
+  }
+
+  const staticContext = await buildAssistantContext(userId);
+  const context = [ragBlock, staticContext].filter(Boolean).join("\n\n---\n\n");
   const completion = await runCompletion({ policy: body.policy, prompt: body.prompt, context });
 
   await query(
@@ -709,8 +750,8 @@ app.post("/api/assistant/chat", async (request) => {
      values ($1, $2, $3, $4, $5, $6)`,
     [userId, body.prompt, completion.output, completion.provider, completion.model, body.policy]
   );
-  await audit(userId, "assistant.chat", "assistant_session", undefined, { policy: body.policy, provider: completion.provider });
-  return completion;
+  await audit(userId, "assistant.chat", "assistant_session", undefined, { policy: body.policy, provider: completion.provider, rag: body.include_rag });
+  return { ...completion, rag_sources: ragSources };
 });
 
 app.get("/api/audit-events", async (request) => {

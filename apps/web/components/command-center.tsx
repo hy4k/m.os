@@ -143,6 +143,7 @@ const platforms = [
 export function CommandCenter({ initialData, live }: Props) {
   const [data, setData] = useState(initialData);
   const [assistantResponse, setAssistantResponse] = useState("Ask me anything about your projects, vault, diary, goals, todos, or next moves.");
+  const [assistantRag, setAssistantRag] = useState<Array<{ id: string; kind: string; title: string; similarity: number }>>([]);
   const [prompt, setPrompt] = useState("What should I focus on next across my projects and life OS?");
   const [activeComposer, setActiveComposer] = useState<"project" | "note" | "todo" | "diary" | "credential">("note");
   const [session, setSession] = useState<AuthSession | null>(null);
@@ -216,13 +217,16 @@ export function CommandCenter({ initialData, live }: Props) {
 
   async function submitAssistant(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setAssistantResponse("Thinking across your project graph, diary, todos, and knowledge base...");
+    setAssistantResponse("Retrieving similar notes, then your full project graph; routing to the LLM…");
+    setAssistantRag([]);
     startTransition(async () => {
       try {
-        const response = await askAssistant({ prompt, policy: "coding" });
+        const response = await askAssistant({ prompt, policy: "coding", include_rag: true, rag_limit: 8 });
+        setAssistantRag(response.rag_sources ?? []);
         setAssistantResponse(`${response.output}\n\nProvider: ${response.provider} / ${response.model}`);
       } catch {
-        setAssistantResponse("The API or LLM runtime is not reachable yet. Once Azure Ollama and the backend are online, this panel will answer with your live context.");
+        setAssistantRag([]);
+        setAssistantResponse("The API or LLM runtime is not reachable yet. Once Azure Ollama and the backend are online, this panel will answer with RAG + your live context.");
       }
     });
   }
@@ -320,6 +324,7 @@ export function CommandCenter({ initialData, live }: Props) {
           <AssistantPanel
             prompt={prompt}
             response={assistantResponse}
+            ragSources={assistantRag}
             pending={isPending}
             onPromptChange={setPrompt}
             onSubmit={submitAssistant}
@@ -657,6 +662,7 @@ function DomainIllustration({ label }: { label: string }) {
 function AssistantPanel(props: {
   prompt: string;
   response: string;
+  ragSources: Array<{ id: string; kind: string; title: string; similarity: number }>;
   pending: boolean;
   onPromptChange: (value: string) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
@@ -673,7 +679,7 @@ function AssistantPanel(props: {
       </div>
       <div className="mb-5 flex items-center justify-between">
         <div>
-          <p className="mt-12 text-xs uppercase tracking-[0.35em] text-violet-100/45">LLM Copilot</p>
+          <p className="mt-12 text-xs uppercase tracking-[0.35em] text-violet-100/45">LLM Copilot + RAG</p>
           <h2 className="mt-2 font-display text-5xl">Ask your life OS</h2>
         </div>
         <BrainCircuit className="h-8 w-8 text-violet-200" />
@@ -688,6 +694,23 @@ function AssistantPanel(props: {
           {props.pending ? "Thinking..." : "Run Assistant"}
         </button>
       </form>
+      {props.ragSources.length > 0 && (
+        <div className="mt-4">
+          <p className="mb-2 text-[10px] uppercase tracking-[0.28em] text-white/35">Grounded in your notes (semantic match)</p>
+          <div className="flex flex-wrap gap-2">
+            {props.ragSources.map((s) => (
+              <span
+                key={s.id}
+                className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-cyan-300/20 bg-cyan-300/[0.08] px-3 py-1.5 text-[11px] text-cyan-100/80"
+                title={`${s.kind} — relevance ${(s.similarity * 100).toFixed(0)}% (approx.)`}
+              >
+                <span className="shrink-0 text-[9px] uppercase text-white/40">{s.kind}</span>
+                <span className="truncate">{s.title}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="mt-5 min-h-40 rounded-3xl border border-white/10 bg-black/25 p-5 text-sm leading-7 text-white/68">
         {props.response}
       </div>

@@ -75,12 +75,14 @@ x-user-id: 00000000-0000-0000-0000-000000000001
   "store_token": false
 }
 
-### Assistant chat
+### Assistant chat (RAG: semantic note retrieval + full project context)
 POST http://localhost:4000/api/assistant/chat
 Content-Type: application/json
 x-user-id: 00000000-0000-0000-0000-000000000001
 
 {
   "policy": "coding",
-  "prompt": "Summarize my current active projects and next 3 actions."
+  "prompt": "Summarize my current active projects and next 3 actions.",
+  "include_rag": true,
+  "rag_limit": 8
 }

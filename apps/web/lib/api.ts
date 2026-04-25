@@ -367,8 +367,20 @@ export async function createCredential(input: { label: string; kind: string; sec
   });
 }
 
-export async function askAssistant(input: { prompt: string; policy: string }) {
-  return request<{ output: string; provider: string; model: string }>("/api/assistant/chat", {
+export type AssistantChatResult = {
+  output: string;
+  provider: string;
+  model: string;
+  rag_sources?: Array<{ id: string; kind: string; title: string; similarity: number }>;
+};
+
+export async function askAssistant(input: {
+  prompt: string;
+  policy: string;
+  include_rag?: boolean;
+  rag_limit?: number;
+}) {
+  return request<AssistantChatResult>("/api/assistant/chat", {
     method: "POST",
     body: JSON.stringify(input)
   });
