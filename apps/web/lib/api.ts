@@ -43,6 +43,30 @@ export type Credential = {
   secret_preview: string;
 };
 
+export type ProjectLink = {
+  id: string;
+  project_id: string;
+  project_name?: string;
+  link_type: "repo" | "deployment" | "database" | "domain" | "storage" | "ai_studio" | "docs" | "other";
+  link_label?: string;
+  link_value: string;
+  created_at?: string;
+};
+
+export type Playground = {
+  id: string;
+  project_id?: string;
+  project_name?: string;
+  idea_id?: string;
+  idea_title?: string;
+  title: string;
+  brief?: string;
+  stage: "seed" | "research" | "prototype" | "build" | "paused" | "launched";
+  current_focus?: string;
+  next_actions?: string[];
+  updated_at?: string;
+};
+
 export type AuditEvent = {
   id: string;
   action: string;
@@ -138,16 +162,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export async function loadCommandCenter() {
-  const [projects, notes, diary, todos, credentials, audit] = await Promise.all([
+  const [projects, notes, diary, todos, credentials, audit, projectLinks, playgrounds] = await Promise.all([
     request<Project[]>("/api/projects"),
     request<KnowledgeItem[]>("/api/notes"),
     request<DiaryEntry[]>("/api/diary"),
     request<Todo[]>("/api/todos"),
     request<Credential[]>("/api/credentials"),
-    request<AuditEvent[]>("/api/audit-events")
+    request<AuditEvent[]>("/api/audit-events"),
+    request<ProjectLink[]>("/api/project-links"),
+    request<Playground[]>("/api/playgrounds")
   ]);
 
-  return { projects, notes, diary, todos, credentials, audit };
+  return { projects, notes, diary, todos, credentials, audit, projectLinks, playgrounds };
 }
 
 export async function register(input: { email: string; password: string; display_name?: string }) {
@@ -174,6 +200,20 @@ export async function loadLlmStatus() {
 
 export async function createProject(input: Pick<Project, "name" | "description" | "platform">) {
   return request<{ id: string }>("/api/projects", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function createProjectLink(input: Pick<ProjectLink, "project_id" | "link_type" | "link_label" | "link_value">) {
+  return request<{ id: string }>("/api/project-links", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function createPlayground(input: Pick<Playground, "project_id" | "title" | "brief" | "stage" | "current_focus"> & { next_actions?: string[] }) {
+  return request<{ id: string }>("/api/playgrounds", {
     method: "POST",
     body: JSON.stringify(input)
   });

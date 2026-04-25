@@ -217,6 +217,82 @@ app.post("/api/projects", async (request, reply) => {
   return reply.code(201).send({ id: rows[0]?.id });
 });
 
+app.get("/api/project-links", async (request) => {
+  const userId = getUserId(request.headers as Record<string, unknown>);
+  return query(
+    `select pl.*, p.name as project_name
+     from project_links pl
+     join projects p on p.id = pl.project_id
+     where pl.user_id = $1
+     order by pl.created_at desc`,
+    [userId]
+  );
+});
+
+app.post("/api/project-links", async (request, reply) => {
+  const userId = getUserId(request.headers as Record<string, unknown>);
+  const body = z.object({
+    project_id: z.string().uuid(),
+    link_type: z.enum(["repo", "deployment", "database", "domain", "storage", "ai_studio", "docs", "other"]),
+    link_label: z.string().optional(),
+    link_value: z.string().min(1),
+    metadata: z.record(z.unknown()).optional()
+  }).parse(request.body);
+
+  const rows = await query<{ id: string }>(
+    `insert into project_links (user_id, project_id, link_type, link_label, link_value, metadata)
+     values ($1, $2, $3, $4, $5, $6)
+     returning id`,
+    [userId, body.project_id, body.link_type, body.link_label ?? null, body.link_value, JSON.stringify(body.metadata ?? {})]
+  );
+  await audit(userId, "project_link.create", "project_link", rows[0]?.id, { link_type: body.link_type });
+  return reply.code(201).send({ id: rows[0]?.id });
+});
+
+app.get("/api/playgrounds", async (request) => {
+  const userId = getUserId(request.headers as Record<string, unknown>);
+  return query(
+    `select pg.*, p.name as project_name, ki.title as idea_title
+     from playgrounds pg
+     left join projects p on p.id = pg.project_id
+     left join knowledge_items ki on ki.id = pg.idea_id
+     where pg.user_id = $1
+     order by pg.updated_at desc`,
+    [userId]
+  );
+});
+
+app.post("/api/playgrounds", async (request, reply) => {
+  const userId = getUserId(request.headers as Record<string, unknown>);
+  const body = z.object({
+    project_id: z.string().uuid().optional(),
+    idea_id: z.string().uuid().optional(),
+    title: z.string().min(1),
+    brief: z.string().optional(),
+    stage: z.enum(["seed", "research", "prototype", "build", "paused", "launched"]).default("seed"),
+    current_focus: z.string().optional(),
+    next_actions: z.array(z.string()).default([])
+  }).parse(request.body);
+
+  const rows = await query<{ id: string }>(
+    `insert into playgrounds (user_id, project_id, idea_id, title, brief, stage, current_focus, next_actions)
+     values ($1, $2, $3, $4, $5, $6, $7, $8)
+     returning id`,
+    [
+      userId,
+      body.project_id ?? null,
+      body.idea_id ?? null,
+      body.title,
+      body.brief ?? null,
+      body.stage,
+      body.current_focus ?? null,
+      JSON.stringify(body.next_actions)
+    ]
+  );
+  await audit(userId, "playground.create", "playground", rows[0]?.id, { stage: body.stage });
+  return reply.code(201).send({ id: rows[0]?.id });
+});
+
 app.get("/api/notes", async (request) => {
   const userId = getUserId(request.headers as Record<string, unknown>);
   return query(

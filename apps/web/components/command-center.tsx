@@ -46,7 +46,9 @@ import {
   type DiaryEntry,
   type KnowledgeItem,
   type LlmStatus,
+  type Playground,
   type Project,
+  type ProjectLink,
   type Todo
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -58,6 +60,8 @@ type CommandCenterData = {
   todos: Todo[];
   credentials: Credential[];
   audit: AuditEvent[];
+  projectLinks: ProjectLink[];
+  playgrounds: Playground[];
 };
 
 type Props = {
@@ -145,9 +149,9 @@ export function CommandCenter({ initialData, live }: Props) {
 
   const stats = useMemo(() => [
     { label: "Projects", value: data.projects.length, icon: Network },
-    { label: "Knowledge", value: data.notes.length + data.diary.length, icon: BrainCircuit },
-    { label: "Secrets", value: data.credentials.length, icon: KeyRound },
-    { label: "Open Tasks", value: data.todos.filter((todo) => todo.status !== "done").length, icon: CalendarCheck }
+    { label: "Links", value: data.projectLinks.length, icon: Code2 },
+    { label: "Playgrounds", value: data.playgrounds.length, icon: Lightbulb },
+    { label: "Secrets", value: data.credentials.length, icon: KeyRound }
   ], [data]);
 
   function refreshCreated(kind: keyof CommandCenterData, item: CommandCenterData[keyof CommandCenterData][number]) {
@@ -306,6 +310,7 @@ export function CommandCenter({ initialData, live }: Props) {
           />
           <IntelligenceGrid data={data} />
         </div>
+        <ProjectIntelligence data={data} />
       </section>
     </main>
   );
@@ -736,6 +741,84 @@ function IntelligenceGrid({ data }: { data: CommandCenterData }) {
         detail: `${item.kind} - ${item.secret_preview}`
       }))} />
       <SystemFootage events={data.audit} />
+    </section>
+  );
+}
+
+function ProjectIntelligence({ data }: { data: CommandCenterData }) {
+  return (
+    <section className="grid gap-6 xl:grid-cols-[1fr_1fr]">
+      <div className="glass-panel relative min-h-96 overflow-hidden rounded-[2.5rem] p-6">
+        <div className="absolute -right-20 -top-20 h-56 w-56 rounded-full bg-cyan-300/10 blur-3xl" />
+        <div className="absolute inset-x-0 top-0 h-12 border-b border-white/10 bg-black/10">
+          <div className="ml-6 mt-4 flex gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-full bg-rose-300/50" />
+            <span className="h-2.5 w-2.5 rounded-full bg-amber-200/50" />
+            <span className="h-2.5 w-2.5 rounded-full bg-emerald-300/50" />
+          </div>
+        </div>
+        <div className="mt-12 flex items-center gap-3">
+          <Network className="h-5 w-5 text-cyan-200" />
+          <h3 className="font-display text-4xl">Project Intelligence</h3>
+        </div>
+        <div className="mt-6 grid gap-3">
+          {data.projectLinks.slice(0, 6).map((link) => (
+            <div key={link.id} className="rounded-2xl border border-white/10 bg-white/[0.04] p-4 transition hover:bg-white/[0.06]">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <div className="font-medium text-white/90">{link.link_label ?? link.link_type}</div>
+                  <div className="mt-1 text-sm text-white/40">{link.project_name ?? link.project_id}</div>
+                </div>
+                <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-white/35">
+                  {link.link_type}
+                </span>
+              </div>
+              <div className="mt-3 truncate font-mono text-xs text-cyan-100/45">{link.link_value}</div>
+            </div>
+          ))}
+          {data.projectLinks.length === 0 && (
+            <div className="rounded-2xl border border-dashed border-white/10 p-5 text-sm text-white/35">
+              No project links yet.
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="glass-panel relative min-h-96 overflow-hidden rounded-[2.5rem] p-6">
+        <div className="absolute -right-20 -top-20 h-56 w-56 rounded-full bg-amber-300/10 blur-3xl" />
+        <div className="absolute inset-x-0 top-0 h-12 border-b border-white/10 bg-black/10">
+          <div className="ml-6 mt-4 flex gap-1.5">
+            <span className="h-2.5 w-2.5 rounded-full bg-rose-300/50" />
+            <span className="h-2.5 w-2.5 rounded-full bg-amber-200/50" />
+            <span className="h-2.5 w-2.5 rounded-full bg-emerald-300/50" />
+          </div>
+        </div>
+        <div className="mt-12 flex items-center gap-3">
+          <Lightbulb className="h-5 w-5 text-amber-200" />
+          <h3 className="font-display text-4xl">Idea Playgrounds</h3>
+        </div>
+        <div className="mt-6 grid gap-3">
+          {data.playgrounds.slice(0, 4).map((playground) => (
+            <div key={playground.id} className="rounded-2xl border border-white/10 bg-white/[0.04] p-4 transition hover:bg-white/[0.06]">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <div className="font-medium text-white/90">{playground.title}</div>
+                  <div className="mt-1 text-sm text-white/40">{playground.project_name ?? playground.current_focus ?? "unlinked"}</div>
+                </div>
+                <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-white/35">
+                  {playground.stage}
+                </span>
+              </div>
+              <div className="mt-3 text-sm leading-6 text-white/45">{playground.brief ?? "No brief yet."}</div>
+            </div>
+          ))}
+          {data.playgrounds.length === 0 && (
+            <div className="rounded-2xl border border-dashed border-white/10 p-5 text-sm text-white/35">
+              No playgrounds yet.
+            </div>
+          )}
+        </div>
+      </div>
     </section>
   );
 }

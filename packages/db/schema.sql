@@ -45,6 +45,21 @@ create table if not exists project_links (
   created_at timestamptz not null default now()
 );
 
+create table if not exists playgrounds (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references users(id) on delete cascade,
+  project_id uuid references projects(id) on delete set null,
+  idea_id uuid references knowledge_items(id) on delete set null,
+  title text not null,
+  brief text,
+  stage text not null default 'seed' check (stage in ('seed', 'research', 'prototype', 'build', 'paused', 'launched')),
+  current_focus text,
+  next_actions jsonb not null default '[]'::jsonb,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists credentials (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references users(id) on delete cascade,
@@ -132,6 +147,10 @@ create table if not exists audit_events (
 );
 
 create index if not exists idx_projects_user_id on projects(user_id);
+create index if not exists idx_project_links_user_id on project_links(user_id);
+create index if not exists idx_project_links_project_id on project_links(project_id);
+create index if not exists idx_playgrounds_user_id on playgrounds(user_id);
+create index if not exists idx_playgrounds_project_id on playgrounds(project_id);
 create index if not exists idx_credentials_user_id on credentials(user_id);
 create index if not exists idx_knowledge_items_user_id on knowledge_items(user_id);
 create index if not exists idx_knowledge_items_embedding on knowledge_items using ivfflat (embedding vector_cosine_ops);
@@ -153,6 +172,8 @@ drop trigger if exists trg_users_updated_at on users;
 create trigger trg_users_updated_at before update on users for each row execute function set_updated_at();
 drop trigger if exists trg_projects_updated_at on projects;
 create trigger trg_projects_updated_at before update on projects for each row execute function set_updated_at();
+drop trigger if exists trg_playgrounds_updated_at on playgrounds;
+create trigger trg_playgrounds_updated_at before update on playgrounds for each row execute function set_updated_at();
 drop trigger if exists trg_credentials_updated_at on credentials;
 create trigger trg_credentials_updated_at before update on credentials for each row execute function set_updated_at();
 drop trigger if exists trg_knowledge_items_updated_at on knowledge_items;

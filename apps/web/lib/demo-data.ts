@@ -1,4 +1,4 @@
-import type { AuditEvent, Credential, DiaryEntry, KnowledgeItem, Project, Todo } from "./api";
+import type { AuditEvent, Credential, DiaryEntry, KnowledgeItem, Playground, Project, ProjectLink, Todo } from "./api";
 
 export const demoData: {
   projects: Project[];
@@ -7,6 +7,8 @@ export const demoData: {
   todos: Todo[];
   credentials: Credential[];
   audit: AuditEvent[];
+  projectLinks: ProjectLink[];
+  playgrounds: Playground[];
 } = {
   projects: [
     {
@@ -95,6 +97,36 @@ export const demoData: {
       action: "credential.create",
       resource_type: "credential",
       created_at: new Date().toISOString()
+    }
+  ],
+  projectLinks: [
+    {
+      id: "demo-link-1",
+      project_id: "demo-project-1",
+      project_name: "noteos.in rebuild",
+      link_type: "repo",
+      link_label: "GitHub repo",
+      link_value: "https://github.com/hy4k/m.os"
+    },
+    {
+      id: "demo-link-2",
+      project_id: "demo-project-2",
+      project_name: "Azure Ollama runtime",
+      link_type: "deployment",
+      link_label: "Ollama endpoint",
+      link_value: "Azure VM :11434"
+    }
+  ],
+  playgrounds: [
+    {
+      id: "demo-playground-1",
+      project_id: "demo-project-1",
+      project_name: "noteos.in rebuild",
+      title: "m.OS product cockpit",
+      brief: "Turn the beautiful shell into a working personal command system.",
+      stage: "prototype",
+      current_focus: "Project intelligence, platform links, playgrounds",
+      next_actions: ["Connect database", "Verify Azure Ollama", "Add connector sync"]
     }
   ]
 };
