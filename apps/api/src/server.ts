@@ -293,6 +293,148 @@ app.post("/api/playgrounds", async (request, reply) => {
   return reply.code(201).send({ id: rows[0]?.id });
 });
 
+app.get("/api/platform-connections", async (request) => {
+  const userId = getUserId(request.headers as Record<string, unknown>);
+  return query(
+    `select pc.*, p.name as project_name, a.account_name
+     from platform_connections pc
+     left join projects p on p.id = pc.project_id
+     left join accounts a on a.id = pc.account_id
+     where pc.user_id = $1
+     order by pc.updated_at desc`,
+    [userId]
+  );
+});
+
+app.post("/api/platform-connections", async (request, reply) => {
+  const userId = getUserId(request.headers as Record<string, unknown>);
+  const body = z.object({
+    account_id: z.string().uuid().optional(),
+    project_id: z.string().uuid().optional(),
+    provider: z.enum(["github", "supabase", "azure", "hostinger", "google_ai_studio", "cursor", "openclaw", "other"]),
+    label: z.string().min(1),
+    base_url: z.string().optional(),
+    status: z.enum(["manual", "connected", "error", "disabled"]).default("manual"),
+    metadata: z.record(z.unknown()).optional()
+  }).parse(request.body);
+
+  const rows = await query<{ id: string }>(
+    `insert into platform_connections (user_id, account_id, project_id, provider, label, base_url, status, metadata)
+     values ($1, $2, $3, $4, $5, $6, $7, $8)
+     returning id`,
+    [
+      userId,
+      body.account_id ?? null,
+      body.project_id ?? null,
+      body.provider,
+      body.label,
+      body.base_url ?? null,
+      body.status,
+      JSON.stringify(body.metadata ?? {})
+    ]
+  );
+  await audit(userId, "platform_connection.create", "platform_connection", rows[0]?.id, { provider: body.provider });
+  return reply.code(201).send({ id: rows[0]?.id });
+});
+
+app.post("/api/platform-connections/:id/check", async (request) => {
+  const userId = getUserId(request.headers as Record<string, unknown>);
+  const params = z.object({ id: z.string().uuid() }).parse(request.params);
+  const rows = await query<{ id: string; provider: string; base_url: string | null }>(
+    `select id, provider, base_url
+     from platform_connections
+     where id = $1 and user_id = $2`,
+    [params.id, userId]
+  );
+  if (!rows[0]) {
+    throw app.httpErrors.notFound("Platform connection not found");
+  }
+
+  await query(
+    `update platform_connections
+     set last_checked_at = now(), status = $1, last_error = $2
+     where id = $3 and user_id = $4`,
+    [rows[0].base_url ? "connected" : "manual", null, params.id, userId]
+  );
+  await audit(userId, "platform_connection.check", "platform_connection", params.id, { provider: rows[0].provider });
+  return { ok: true, status: rows[0].base_url ? "connected" : "manual" };
+});
+
+app.get("/api/environments", async (request) => {
+  const userId = getUserId(request.headers as Record<string, unknown>);
+  return query(
+    `select pe.*, p.name as project_name
+     from project_environments pe
+     join projects p on p.id = pe.project_id
+     where pe.user_id = $1
+     order by pe.updated_at desc`,
+    [userId]
+  );
+});
+
+app.post("/api/environments", async (request, reply) => {
+  const userId = getUserId(request.headers as Record<string, unknown>);
+  const body = z.object({
+    project_id: z.string().uuid(),
+    name: z.string().min(1),
+    url: z.string().optional(),
+    runtime: z.string().optional(),
+    region: z.string().optional(),
+    status: z.enum(["unknown", "healthy", "degraded", "down", "paused"]).default("unknown")
+  }).parse(request.body);
+
+  const rows = await query<{ id: string }>(
+    `insert into project_environments (user_id, project_id, name, url, runtime, region, status)
+     values ($1, $2, $3, $4, $5, $6, $7)
+     returning id`,
+    [userId, body.project_id, body.name, body.url ?? null, body.runtime ?? null, body.region ?? null, body.status]
+  );
+  await audit(userId, "environment.create", "project_environment", rows[0]?.id, { status: body.status });
+  return reply.code(201).send({ id: rows[0]?.id });
+});
+
+app.get("/api/deployment-notes", async (request) => {
+  const userId = getUserId(request.headers as Record<string, unknown>);
+  return query(
+    `select dn.*, p.name as project_name, pe.name as environment_name
+     from deployment_notes dn
+     left join projects p on p.id = dn.project_id
+     left join project_environments pe on pe.id = dn.environment_id
+     where dn.user_id = $1
+     order by dn.created_at desc`,
+    [userId]
+  );
+});
+
+app.post("/api/deployment-notes", async (request, reply) => {
+  const userId = getUserId(request.headers as Record<string, unknown>);
+  const body = z.object({
+    project_id: z.string().uuid().optional(),
+    environment_id: z.string().uuid().optional(),
+    title: z.string().min(1),
+    summary: z.string().optional(),
+    status: z.enum(["planned", "running", "succeeded", "failed", "rolled_back"]).default("planned"),
+    version_ref: z.string().optional()
+  }).parse(request.body);
+
+  const rows = await query<{ id: string }>(
+    `insert into deployment_notes (user_id, project_id, environment_id, title, summary, status, version_ref)
+     values ($1, $2, $3, $4, $5, $6, $7)
+     returning id`,
+    [
+      userId,
+      body.project_id ?? null,
+      body.environment_id ?? null,
+      body.title,
+      body.summary ?? null,
+      body.status,
+      body.version_ref ?? null
+    ]
+  );
+  await audit(userId, "deployment_note.create", "deployment_note", rows[0]?.id, { status: body.status });
+  return reply.code(201).send({ id: rows[0]?.id });
+});
+
 app.get("/api/notes", async (request) => {
   const userId = getUserId(request.headers as Record<string, unknown>);
   return query(

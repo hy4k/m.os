@@ -43,11 +43,14 @@ import {
   type AuthSession,
   type AuditEvent,
   type Credential,
+  type DeploymentNote,
   type DiaryEntry,
   type KnowledgeItem,
   type LlmStatus,
+  type PlatformConnection,
   type Playground,
   type Project,
+  type ProjectEnvironment,
   type ProjectLink,
   type Todo
 } from "@/lib/api";
@@ -62,6 +65,9 @@ type CommandCenterData = {
   audit: AuditEvent[];
   projectLinks: ProjectLink[];
   playgrounds: Playground[];
+  platformConnections: PlatformConnection[];
+  environments: ProjectEnvironment[];
+  deploymentNotes: DeploymentNote[];
 };
 
 type Props = {
@@ -149,7 +155,7 @@ export function CommandCenter({ initialData, live }: Props) {
 
   const stats = useMemo(() => [
     { label: "Projects", value: data.projects.length, icon: Network },
-    { label: "Links", value: data.projectLinks.length, icon: Code2 },
+    { label: "Connections", value: data.platformConnections.length, icon: Code2 },
     { label: "Playgrounds", value: data.playgrounds.length, icon: Lightbulb },
     { label: "Secrets", value: data.credentials.length, icon: KeyRound }
   ], [data]);
@@ -311,6 +317,7 @@ export function CommandCenter({ initialData, live }: Props) {
           <IntelligenceGrid data={data} />
         </div>
         <ProjectIntelligence data={data} />
+        <OperationsDeck data={data} />
       </section>
     </main>
   );
@@ -820,6 +827,80 @@ function ProjectIntelligence({ data }: { data: CommandCenterData }) {
         </div>
       </div>
     </section>
+  );
+}
+
+function OperationsDeck({ data }: { data: CommandCenterData }) {
+  return (
+    <section className="grid gap-6 xl:grid-cols-3">
+      <OpsPanel
+        title="Connector Matrix"
+        icon={SquareStack}
+        items={data.platformConnections.map((connection) => ({
+          id: connection.id,
+          title: connection.label,
+          meta: `${connection.provider} - ${connection.status}`,
+          detail: connection.project_name ?? connection.base_url ?? "manual"
+        }))}
+      />
+      <OpsPanel
+        title="Environments"
+        icon={Cloud}
+        items={data.environments.map((environment) => ({
+          id: environment.id,
+          title: environment.name,
+          meta: `${environment.runtime ?? "runtime"} - ${environment.status}`,
+          detail: environment.project_name ?? environment.url ?? "unlinked"
+        }))}
+      />
+      <OpsPanel
+        title="Deployment Footage"
+        icon={Activity}
+        items={data.deploymentNotes.map((note) => ({
+          id: note.id,
+          title: note.title,
+          meta: `${note.status}${note.version_ref ? ` - ${note.version_ref}` : ""}`,
+          detail: note.project_name ?? note.summary ?? "recorded"
+        }))}
+      />
+    </section>
+  );
+}
+
+function OpsPanel({ title, icon: Icon, items }: { title: string; icon: LucideIcon; items: Array<{ id: string; title: string; meta: string; detail: string }> }) {
+  return (
+    <div className="glass-panel relative min-h-80 overflow-hidden rounded-[2.5rem] p-5">
+      <div className="absolute -right-16 -top-16 h-44 w-44 rounded-full bg-violet-300/10 blur-3xl" />
+      <div className="absolute inset-x-0 top-0 h-12 border-b border-white/10 bg-black/10">
+        <div className="ml-5 mt-4 flex gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-full bg-rose-300/50" />
+          <span className="h-2.5 w-2.5 rounded-full bg-amber-200/50" />
+          <span className="h-2.5 w-2.5 rounded-full bg-emerald-300/50" />
+        </div>
+      </div>
+      <div className="mt-12 flex items-center gap-3">
+        <Icon className="h-5 w-5 text-violet-200" />
+        <h3 className="font-display text-3xl">{title}</h3>
+      </div>
+      <div className="mt-6 space-y-3">
+        {items.slice(0, 4).map((item) => (
+          <div key={item.id} className="rounded-2xl border border-white/10 bg-white/[0.04] p-4 transition hover:bg-white/[0.06]">
+            <div className="flex items-center justify-between gap-3">
+              <div className="font-medium text-white/90">{item.title}</div>
+              <span className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-white/35">
+                {item.meta}
+              </span>
+            </div>
+            <div className="mt-2 line-clamp-2 text-sm leading-6 text-white/42">{item.detail}</div>
+          </div>
+        ))}
+        {items.length === 0 && (
+          <div className="rounded-2xl border border-dashed border-white/10 p-5 text-sm text-white/35">
+            Nothing connected yet.
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

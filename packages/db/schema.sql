@@ -45,16 +45,17 @@ create table if not exists project_links (
   created_at timestamptz not null default now()
 );
 
-create table if not exists playgrounds (
+create table if not exists platform_connections (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references users(id) on delete cascade,
-  project_id uuid references projects(id) on delete set null,
-  idea_id uuid references knowledge_items(id) on delete set null,
-  title text not null,
-  brief text,
-  stage text not null default 'seed' check (stage in ('seed', 'research', 'prototype', 'build', 'paused', 'launched')),
-  current_focus text,
-  next_actions jsonb not null default '[]'::jsonb,
+  account_id uuid references accounts(id) on delete set null,
+  project_id uuid references projects(id) on delete cascade,
+  provider text not null,
+  label text not null,
+  base_url text,
+  status text not null default 'manual' check (status in ('manual', 'connected', 'error', 'disabled')),
+  last_checked_at timestamptz,
+  last_error text,
   metadata jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -83,6 +84,21 @@ create table if not exists knowledge_items (
   tags text[] not null default '{}',
   metadata jsonb not null default '{}'::jsonb,
   embedding vector(768),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists playgrounds (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references users(id) on delete cascade,
+  project_id uuid references projects(id) on delete set null,
+  idea_id uuid references knowledge_items(id) on delete set null,
+  title text not null,
+  brief text,
+  stage text not null default 'seed' check (stage in ('seed', 'research', 'prototype', 'build', 'paused', 'launched')),
+  current_focus text,
+  next_actions jsonb not null default '[]'::jsonb,
+  metadata jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -125,6 +141,34 @@ create table if not exists files (
   created_at timestamptz not null default now()
 );
 
+create table if not exists project_environments (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references users(id) on delete cascade,
+  project_id uuid not null references projects(id) on delete cascade,
+  name text not null,
+  url text,
+  runtime text,
+  region text,
+  status text not null default 'unknown' check (status in ('unknown', 'healthy', 'degraded', 'down', 'paused')),
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists deployment_notes (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references users(id) on delete cascade,
+  project_id uuid references projects(id) on delete set null,
+  environment_id uuid references project_environments(id) on delete set null,
+  title text not null,
+  summary text,
+  status text not null default 'planned' check (status in ('planned', 'running', 'succeeded', 'failed', 'rolled_back')),
+  version_ref text,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists assistant_sessions (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references users(id) on delete cascade,
@@ -149,8 +193,14 @@ create table if not exists audit_events (
 create index if not exists idx_projects_user_id on projects(user_id);
 create index if not exists idx_project_links_user_id on project_links(user_id);
 create index if not exists idx_project_links_project_id on project_links(project_id);
+create index if not exists idx_platform_connections_user_id on platform_connections(user_id);
+create index if not exists idx_platform_connections_project_id on platform_connections(project_id);
 create index if not exists idx_playgrounds_user_id on playgrounds(user_id);
 create index if not exists idx_playgrounds_project_id on playgrounds(project_id);
+create index if not exists idx_project_environments_user_id on project_environments(user_id);
+create index if not exists idx_project_environments_project_id on project_environments(project_id);
+create index if not exists idx_deployment_notes_user_id on deployment_notes(user_id);
+create index if not exists idx_deployment_notes_project_id on deployment_notes(project_id);
 create index if not exists idx_credentials_user_id on credentials(user_id);
 create index if not exists idx_knowledge_items_user_id on knowledge_items(user_id);
 create index if not exists idx_knowledge_items_embedding on knowledge_items using ivfflat (embedding vector_cosine_ops);
@@ -174,6 +224,12 @@ drop trigger if exists trg_projects_updated_at on projects;
 create trigger trg_projects_updated_at before update on projects for each row execute function set_updated_at();
 drop trigger if exists trg_playgrounds_updated_at on playgrounds;
 create trigger trg_playgrounds_updated_at before update on playgrounds for each row execute function set_updated_at();
+drop trigger if exists trg_platform_connections_updated_at on platform_connections;
+create trigger trg_platform_connections_updated_at before update on platform_connections for each row execute function set_updated_at();
+drop trigger if exists trg_project_environments_updated_at on project_environments;
+create trigger trg_project_environments_updated_at before update on project_environments for each row execute function set_updated_at();
+drop trigger if exists trg_deployment_notes_updated_at on deployment_notes;
+create trigger trg_deployment_notes_updated_at before update on deployment_notes for each row execute function set_updated_at();
 drop trigger if exists trg_credentials_updated_at on credentials;
 create trigger trg_credentials_updated_at before update on credentials for each row execute function set_updated_at();
 drop trigger if exists trg_knowledge_items_updated_at on knowledge_items;

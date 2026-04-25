@@ -1,4 +1,4 @@
-import type { AuditEvent, Credential, DiaryEntry, KnowledgeItem, Playground, Project, ProjectLink, Todo } from "./api";
+import type { AuditEvent, Credential, DeploymentNote, DiaryEntry, KnowledgeItem, PlatformConnection, Playground, Project, ProjectEnvironment, ProjectLink, Todo } from "./api";
 
 export const demoData: {
   projects: Project[];
@@ -9,6 +9,9 @@ export const demoData: {
   audit: AuditEvent[];
   projectLinks: ProjectLink[];
   playgrounds: Playground[];
+  platformConnections: PlatformConnection[];
+  environments: ProjectEnvironment[];
+  deploymentNotes: DeploymentNote[];
 } = {
   projects: [
     {
@@ -127,6 +130,50 @@ export const demoData: {
       stage: "prototype",
       current_focus: "Project intelligence, platform links, playgrounds",
       next_actions: ["Connect database", "Verify Azure Ollama", "Add connector sync"]
+    }
+  ],
+  platformConnections: [
+    {
+      id: "demo-connection-1",
+      project_id: "demo-project-1",
+      project_name: "noteos.in rebuild",
+      provider: "github",
+      label: "m.OS repository",
+      base_url: "https://github.com/hy4k/m.os",
+      status: "connected"
+    },
+    {
+      id: "demo-connection-2",
+      project_id: "demo-project-2",
+      project_name: "Azure Ollama runtime",
+      provider: "azure",
+      label: "Ollama VM",
+      base_url: "http://azure-ollama:11434",
+      status: "manual"
+    }
+  ],
+  environments: [
+    {
+      id: "demo-env-1",
+      project_id: "demo-project-1",
+      project_name: "noteos.in rebuild",
+      name: "staging",
+      url: "http://localhost:57666",
+      runtime: "Next.js",
+      region: "Hostinger",
+      status: "healthy"
+    }
+  ],
+  deploymentNotes: [
+    {
+      id: "demo-deploy-1",
+      project_id: "demo-project-1",
+      project_name: "noteos.in rebuild",
+      environment_name: "staging",
+      title: "Preview server online",
+      summary: "m.OS UI is reviewable through the forwarded local port.",
+      status: "succeeded",
+      version_ref: "local-main"
     }
   ]
 };

@@ -67,6 +67,44 @@ export type Playground = {
   updated_at?: string;
 };
 
+export type PlatformConnection = {
+  id: string;
+  account_id?: string;
+  account_name?: string;
+  project_id?: string;
+  project_name?: string;
+  provider: "github" | "supabase" | "azure" | "hostinger" | "google_ai_studio" | "cursor" | "openclaw" | "other";
+  label: string;
+  base_url?: string;
+  status: "manual" | "connected" | "error" | "disabled";
+  last_checked_at?: string;
+};
+
+export type ProjectEnvironment = {
+  id: string;
+  project_id: string;
+  project_name?: string;
+  name: string;
+  url?: string;
+  runtime?: string;
+  region?: string;
+  status: "unknown" | "healthy" | "degraded" | "down" | "paused";
+  updated_at?: string;
+};
+
+export type DeploymentNote = {
+  id: string;
+  project_id?: string;
+  project_name?: string;
+  environment_id?: string;
+  environment_name?: string;
+  title: string;
+  summary?: string;
+  status: "planned" | "running" | "succeeded" | "failed" | "rolled_back";
+  version_ref?: string;
+  created_at?: string;
+};
+
 export type AuditEvent = {
   id: string;
   action: string;
@@ -162,7 +200,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export async function loadCommandCenter() {
-  const [projects, notes, diary, todos, credentials, audit, projectLinks, playgrounds] = await Promise.all([
+  const [
+    projects,
+    notes,
+    diary,
+    todos,
+    credentials,
+    audit,
+    projectLinks,
+    playgrounds,
+    platformConnections,
+    environments,
+    deploymentNotes
+  ] = await Promise.all([
     request<Project[]>("/api/projects"),
     request<KnowledgeItem[]>("/api/notes"),
     request<DiaryEntry[]>("/api/diary"),
@@ -170,10 +220,25 @@ export async function loadCommandCenter() {
     request<Credential[]>("/api/credentials"),
     request<AuditEvent[]>("/api/audit-events"),
     request<ProjectLink[]>("/api/project-links"),
-    request<Playground[]>("/api/playgrounds")
+    request<Playground[]>("/api/playgrounds"),
+    request<PlatformConnection[]>("/api/platform-connections"),
+    request<ProjectEnvironment[]>("/api/environments"),
+    request<DeploymentNote[]>("/api/deployment-notes")
   ]);
 
-  return { projects, notes, diary, todos, credentials, audit, projectLinks, playgrounds };
+  return {
+    projects,
+    notes,
+    diary,
+    todos,
+    credentials,
+    audit,
+    projectLinks,
+    playgrounds,
+    platformConnections,
+    environments,
+    deploymentNotes
+  };
 }
 
 export async function register(input: { email: string; password: string; display_name?: string }) {
