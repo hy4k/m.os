@@ -80,6 +80,12 @@ type Props = {
   live: boolean;
 };
 
+const KNOWLEDGE_KINDS: KnowledgeItem["kind"][] = ["note", "idea", "goal", "contact", "business", "life"];
+
+function parseKnowledgeKind(raw: string): KnowledgeItem["kind"] {
+  return KNOWLEDGE_KINDS.includes(raw as KnowledgeItem["kind"]) ? (raw as KnowledgeItem["kind"]) : "idea";
+}
+
 const zones = [
   {
     label: "Projects",
@@ -189,8 +195,9 @@ export function CommandCenter({ initialData, live }: Props) {
           refreshCreated("projects", { id: created.id, name: title, description: content, platform: "manual", status: "active" });
         }
         if (activeComposer === "note") {
-          const created = await createNote({ title, content, kind: "idea" });
-          refreshCreated("notes", { id: created.id, title, content, kind: "idea" });
+          const kind = parseKnowledgeKind(String(form.get("knowledge_kind") ?? "idea"));
+          const created = await createNote({ title, content, kind });
+          refreshCreated("notes", { id: created.id, title, content, kind });
         }
         if (activeComposer === "todo") {
           const created = await createTodo({ title, detail: content, priority: "high" });
@@ -207,7 +214,10 @@ export function CommandCenter({ initialData, live }: Props) {
       } catch {
         const fallbackId = `local-${Date.now()}`;
         if (activeComposer === "project") refreshCreated("projects", { id: fallbackId, name: title, description: content, platform: "local", status: "draft" });
-        if (activeComposer === "note") refreshCreated("notes", { id: fallbackId, title, content, kind: "idea" });
+        if (activeComposer === "note") {
+          const kind = parseKnowledgeKind(String(form.get("knowledge_kind") ?? "idea"));
+          refreshCreated("notes", { id: fallbackId, title, content, kind });
+        }
         if (activeComposer === "todo") refreshCreated("todos", { id: fallbackId, title, detail: content, priority: "high", status: "pending" });
         if (activeComposer === "diary") refreshCreated("diary", { id: fallbackId, title, content, mood: "offline" });
         if (activeComposer === "credential") refreshCreated("credentials", { id: fallbackId, label: title, kind: "secret", secret_preview: "local-only" });
@@ -221,7 +231,7 @@ export function CommandCenter({ initialData, live }: Props) {
     setAssistantRag([]);
     startTransition(async () => {
       try {
-        const response = await askAssistant({ prompt, policy: "coding", include_rag: true, rag_limit: 8 });
+        const response = await askAssistant({ prompt, policy: "life-os", include_rag: true, rag_limit: 8 });
         setAssistantRag(response.rag_sources ?? []);
         setAssistantResponse(`${response.output}\n\nProvider: ${response.provider} / ${response.model}`);
       } catch {
@@ -340,6 +350,7 @@ export function CommandCenter({ initialData, live }: Props) {
           />
           <IntelligenceGrid data={data} />
         </div>
+        <LifePanorama notes={data.notes} />
         <ProjectIntelligence data={data} />
         <OperationsCommandStrip
           data={data}
@@ -461,31 +472,61 @@ function SessionConsole(props: {
 function LlmRuntimePanel({ status }: { status: LlmStatus | null }) {
   const azureOk = Boolean(status?.azure.ok);
   const gemmaInstalled = Boolean(status?.azure.expectedModelInstalled);
-  const primaryRoute = status?.routes.find((route) => route.policy === "coding");
+  const lifeOs = status?.routes.find((route) => route.policy === "life-os");
+  const mos = status?.mosAssistant;
 
   return (
     <section className="glass-panel relative overflow-hidden rounded-[2rem] p-5">
       <div className="absolute -right-16 -top-16 h-40 w-40 rounded-full bg-cyan-300/10 blur-3xl" />
-      <div className="grid gap-4 lg:grid-cols-[1fr_1.3fr] lg:items-center">
+      <div className="grid gap-5 lg:grid-cols-[1.15fr_1.2fr] lg:items-start">
         <div>
-          <p className="text-[10px] uppercase tracking-[0.35em] text-white/30">LLM Runtime</p>
+          <p className="text-[10px] uppercase tracking-[0.35em] text-white/30">m.OS primary brain (Azure Ollama)</p>
           <h2 className="mt-1 font-display text-3xl text-white">
-            {azureOk ? "Azure Ollama online" : "Azure Ollama not verified"}
+            {azureOk ? "Gemma 4 command stack online" : "Azure Ollama not verified"}
           </h2>
           <p className="mt-2 text-sm text-white/42">
             {status
-              ? `${status.azure.expectedModel ?? "Gemma"} ${gemmaInstalled ? "is installed" : "is not confirmed yet"}`
+              ? `Copilot uses Ollama /api/chat on your Azure host with ${
+                  status.azure.expectedModel ?? "AZURE_OLLAMA_MODEL"
+                } — ${gemmaInstalled ? "model present in Ollama" : "model not seen in ollama list yet"}.`
               : "API status endpoint is not reachable yet."}
           </p>
+          {mos && (
+            <p className="mt-2 text-xs leading-relaxed text-cyan-100/50">
+              Advanced stack: {mos.numCtx.toLocaleString()} token context window · T={mos.temperature} · system prompt:{" "}
+              {mos.systemPrompt} · {mos.model}
+            </p>
+          )}
         </div>
-        <div className="grid gap-2 sm:grid-cols-3">
-          <RuntimeChip label="Azure" value={azureOk ? "online" : "offline"} active={azureOk} />
+        <div className="grid gap-2 sm:grid-cols-2">
+          <RuntimeChip
+            label="Azure endpoint"
+            value={status?.azure.baseUrl ? formatHost(status.azure.baseUrl) : "—"}
+            active={azureOk}
+          />
           <RuntimeChip label="Gemma 4" value={gemmaInstalled ? "ready" : "missing"} active={gemmaInstalled} />
-          <RuntimeChip label="Route" value={primaryRoute?.model ?? "unknown"} active={Boolean(primaryRoute)} />
+          <RuntimeChip
+            label="m.OS (life-os)"
+            value={lifeOs?.model?.split("/").pop() ?? lifeOs?.model ?? "—"}
+            active={Boolean(lifeOs)}
+          />
+          <RuntimeChip
+            label="RAG + graph"
+            value="vector + project graph"
+            active={Boolean(status)}
+          />
         </div>
       </div>
     </section>
   );
+}
+
+function formatHost(url: string) {
+  try {
+    return new URL(url).host || url;
+  } catch {
+    return url;
+  }
 }
 
 function RuntimeChip({ label, value, active }: { label: string; value: string; active: boolean }) {
@@ -679,7 +720,7 @@ function AssistantPanel(props: {
       </div>
       <div className="mb-5 flex items-center justify-between">
         <div>
-          <p className="mt-12 text-xs uppercase tracking-[0.35em] text-violet-100/45">LLM Copilot + RAG</p>
+          <p className="mt-12 text-xs uppercase tracking-[0.35em] text-violet-100/45">Azure Ollama · Gemma 4 + RAG</p>
           <h2 className="mt-2 font-display text-5xl">Ask your life OS</h2>
         </div>
         <BrainCircuit className="h-8 w-8 text-violet-200" />
@@ -759,6 +800,20 @@ function Composer(props: {
       </div>
       <form onSubmit={props.onSubmit} className="space-y-3">
         <input name="title" required placeholder={`${props.active} title`} className="command-input w-full rounded-2xl px-4 py-4 text-white" />
+        {props.active === "note" && (
+          <select
+            name="knowledge_kind"
+            className="command-input w-full rounded-2xl px-4 py-3 text-sm text-white"
+            defaultValue="idea"
+          >
+            <option value="idea">Idea</option>
+            <option value="note">Note</option>
+            <option value="goal">Goal</option>
+            <option value="contact">Contact</option>
+            <option value="business">Business</option>
+            <option value="life">Life & family</option>
+          </select>
+        )}
         <textarea name="content" required={props.active !== "credential"} placeholder="Details, context, next action, platform, or memory..." className="command-input min-h-28 w-full resize-none rounded-2xl p-4 text-white" />
         {props.active === "credential" && (
           <input name="secret" type="password" placeholder="Secret value" className="command-input w-full rounded-2xl px-4 py-4 text-white" />
@@ -767,6 +822,52 @@ function Composer(props: {
           Save to OS
         </button>
       </form>
+    </section>
+  );
+}
+
+function LifePanorama({ notes }: { notes: KnowledgeItem[] }) {
+  const lanes: Array<{ label: string; kind: KnowledgeItem["kind"]; chip: string }> = [
+    { label: "Life & family", kind: "life", chip: "north star" },
+    { label: "Goals", kind: "goal", chip: "milestones" },
+    { label: "Business", kind: "business", chip: "empire ledger" },
+    { label: "People", kind: "contact", chip: "rolodex" }
+  ];
+  return (
+    <section className="glass-panel rounded-[2.5rem] p-5 sm:p-7">
+      <div className="mb-6 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.35em] text-white/30">Life OS lanes</p>
+          <h2 className="font-display text-4xl text-white md:text-5xl">Personal graph</h2>
+        </div>
+        <p className="max-w-xl text-sm text-white/45">
+          Goals, business, contacts, and life planning surface here from your knowledge stream. Capture with the note tab and pick a lane.
+        </p>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {lanes.map((lane) => {
+          const items = notes.filter((n) => n.kind === lane.kind).slice(0, 4);
+          return (
+            <div key={lane.kind} className="rounded-3xl border border-white/10 bg-white/[0.04] p-4">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-medium text-white/88">{lane.label}</span>
+                <span className="text-[9px] uppercase tracking-[0.2em] text-white/32">{lane.chip}</span>
+              </div>
+              <ul className="mt-4 space-y-3">
+                {items.map((item) => (
+                  <li key={item.id} className="border-t border-white/5 pt-3 first:border-t-0 first:pt-0">
+                    <div className="text-sm font-medium text-white/75">{item.title}</div>
+                    <div className="mt-1 line-clamp-2 text-xs leading-5 text-white/38">{item.content}</div>
+                  </li>
+                ))}
+                {items.length === 0 && (
+                  <li className="text-xs text-white/30">Nothing in this lane yet.</li>
+                )}
+              </ul>
+            </div>
+          );
+        })}
+      </div>
     </section>
   );
 }

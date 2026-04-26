@@ -1,6 +1,7 @@
 export type LlmPolicy =
   | "private-fast"
   | "coding"
+  | "life-os"
   | "deep-reasoning"
   | "summarize"
   | "embed"
@@ -25,6 +26,9 @@ export function routePolicy(policy: LlmPolicy, cfg: RoutingConfig): ProviderTarg
   }
   if (policy === "private-fast" || policy === "embed") {
     return cfg.hostinger;
+  }
+  if (policy === "life-os") {
+    return cfg.azure;
   }
   return cfg.azure;
 }

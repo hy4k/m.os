@@ -1,0 +1,27 @@
+# Build: docker build -f ops/Dockerfile.web -t m-os-web .
+# Serves m.OS on :3000 — set NEXT_PUBLIC_API_BASE_URL to public origin (e.g. https://noteos.in) so the browser can call the API.
+FROM node:20-alpine AS builder
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+COPY package.json package-lock.json* ./
+COPY apps ./apps
+COPY packages ./packages
+COPY services ./services
+RUN npm ci
+COPY . .
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN npm run build -w @pllos/web
+
+FROM node:20-alpine AS runner
+RUN apk add --no-cache dumb-init
+WORKDIR /app
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+# Next.js standalone output (apps/web is the Next app)
+COPY --from=builder /app/apps/web/.next/standalone ./
+COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
+COPY --from=builder /app/apps/web/public ./apps/web/public
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+EXPOSE 3000
+CMD ["dumb-init", "node", "apps/web/server.js"]

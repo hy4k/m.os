@@ -1,0 +1,14 @@
+# m.OS on noteos.in — set DNS to this VPS; Caddy gets HTTPS via Let's Encrypt.
+# Web calls: https://noteos.in/api/...  →  Fastify (same path).
+
+noteos.in, www.noteos.in {
+	encode zstd gzip
+
+	handle /api* {
+		reverse_proxy api:4000
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+}

@@ -17,6 +17,7 @@
     "db:migrate": "npm run db:migrate -w apps/api",
     "db:seed": "npm run db:seed -w apps/api",
     "lint": "npm run lint -ws --if-present",
-    "typecheck": "npm run typecheck -ws --if-present"
+    "typecheck": "npm run typecheck -ws --if-present",
+    "worker": "npm run start -w @pllos/workers"
   }
 }

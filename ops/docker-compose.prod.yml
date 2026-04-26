@@ -1,0 +1,84 @@
+# Production-style stack for noteos.in (m.OS only).
+# From repo root:  docker compose -f ops/docker-compose.prod.yml up -d
+# Set secrets via .env (copy from .env.example) or compose overrides — never commit real secrets.
+#
+# Typical public URL: https://noteos.in  →  Caddy terminates TLS, routes /api/* to API, /* to web.
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: m-os-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-personal_llm_os}
+    volumes:
+      - m_os_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-personal_llm_os}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ..
+      dockerfile: ops/Dockerfile.api
+    container_name: m-os-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-personal_llm_os}
+      JWT_PRIVATE_KEY_BASE64: ${JWT_PRIVATE_KEY_BASE64}
+      JWT_PUBLIC_KEY_BASE64: ${JWT_PUBLIC_KEY_BASE64}
+      MASTER_ENCRYPTION_KEY_BASE64: ${MASTER_ENCRYPTION_KEY_BASE64}
+      AZURE_OLLAMA_BASE_URL: ${AZURE_OLLAMA_BASE_URL}
+      AZURE_OLLAMA_MODEL: ${AZURE_OLLAMA_MODEL:-gemma4:e4b}
+      AZURE_OLLAMA_FALLBACK_MODELS: ${AZURE_OLLAMA_FALLBACK_MODELS:-gemma3:12b,qwen3-coder:latest}
+      HOSTINGER_OLLAMA_BASE_URL: ${HOSTINGER_OLLAMA_BASE_URL:-http://127.0.0.1:11434}
+      HOSTINGER_OLLAMA_MODEL: ${HOSTINGER_OLLAMA_MODEL:-gemma3:4b}
+      OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      ALLOW_X_USER_ID_HEADER: ${ALLOW_X_USER_ID_HEADER:-false}
+      RATE_LIMIT_MAX_PER_MINUTE: ${RATE_LIMIT_MAX_PER_MINUTE:-200}
+    expose:
+      - "4000"
+
+  web:
+    build:
+      context: ..
+      dockerfile: ops/Dockerfile.web
+    container_name: m-os-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      NODE_ENV: production
+      # Browser-visible API origin (same host when behind Caddy: https://noteos.in)
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-https://noteos.in}
+    expose:
+      - "3000"
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: m-os-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - api
+      - web
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  m_os_pgdata:
+  caddy_data:
+  caddy_config:

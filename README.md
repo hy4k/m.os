@@ -36,8 +36,9 @@ The web app falls back to demo data when the API/database is offline, so the pro
 m.OS can verify the configured Azure Ollama runtime through `GET /api/llm/status`.
 See `ops/AZURE_OLLAMA.md` for Gemma 4 setup and model pull commands.
 
-## Deployment Targets
+## Deployment (noteos.in = m.OS only)
 
-- Hostinger VPS: web/API reverse proxy and app runtime.
-- Azure: Ollama runtime for stronger local models.
-- Optional cloud model fallback for quality-first responses.
+- **Runbook:** [ops/NOTEOS_DEPLOY.md](ops/NOTEOS_DEPLOY.md) — DNS, `docker compose -f ops/docker-compose.prod.yml`, migrations, Caddy + TLS, env vars.
+- **Hostinger VPS:** Caddy (or Nginx) + API + web containers; Postgres with pgvector.
+- **Azure:** Ollama (Gemma 4, embeddings) — see [ops/AZURE_OLLAMA.md](ops/AZURE_OLLAMA.md).
+- **CI:** `.github/workflows/ci.yml` runs `npm run typecheck` on push to `main` / `develop`.

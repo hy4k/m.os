@@ -238,3 +238,9 @@ drop trigger if exists trg_diary_entries_updated_at on diary_entries;
 create trigger trg_diary_entries_updated_at before update on diary_entries for each row execute function set_updated_at();
 drop trigger if exists trg_todos_updated_at on todos;
 create trigger trg_todos_updated_at before update on todos for each row execute function set_updated_at();
+
+-- Applied migration filenames (see packages/db/migrations). `schema.sql` is the idempotent base.
+create table if not exists schema_migrations (
+  name text primary key,
+  applied_at timestamptz not null default now()
+);

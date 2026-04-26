@@ -29,7 +29,7 @@ npm install
 npm run dev -w apps/api
 ```
 
-## Recommended Next Production Steps
-- Add migrations tooling (`drizzle` or `prisma`).
-- Add HTTPS termination and WAF rules.
-- Add CI checks and automated backups.
+## Recommended next steps
+- **noteos.in / m.OS:** follow [NOTEOS_DEPLOY.md](./NOTEOS_DEPLOY.md) (Dockerfile + `docker-compose.prod`, Caddy, migrations + optional seed).
+- Incremental SQL: `packages/db/migrations/*.sql` (tracked in `schema_migrations` after the idempotent `schema.sql`).
+- Add WAF / rate limits and automated Postgres backups in your provider.

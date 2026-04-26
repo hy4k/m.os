@@ -149,6 +149,13 @@ export type LlmStatus = {
     baseUrl: string;
   }>;
   cloudFallbackConfigured: boolean;
+  mosAssistant?: {
+    baseUrl: string;
+    model: string;
+    numCtx: number;
+    temperature: number;
+    systemPrompt: "default" | "custom";
+  };
 };
 
 export function getStoredSession(): AuthSession | null {

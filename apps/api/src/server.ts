@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import rateLimit from "@fastify/rate-limit";
 import sensible from "@fastify/sensible";
 import jwt from "@fastify/jwt";
 import { z } from "zod";
@@ -8,10 +9,23 @@ import { query } from "./db.js";
 import { decryptSecret, encryptSecret, hashPassword, verifyPassword } from "./security.js";
 import { buildAssistantContext } from "./assistant-context.js";
 import { fetchUserRepos } from "./github.js";
-import { embedText, llmRoutes, ollamaStatus, runCompletion } from "./llm.js";
+import { embedText, llmRoutes, ollamaStatus, runMosAssistantCompletion } from "./llm.js";
 
 const app = Fastify({ logger: true });
-await app.register(cors, { origin: true, credentials: true });
+const corsOrigins = env.CORS_ORIGIN?.split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+await app.register(cors, {
+  origin: corsOrigins && corsOrigins.length > 0 ? corsOrigins : true,
+  credentials: true
+});
+if (env.RATE_LIMIT_MAX_PER_MINUTE > 0) {
+  await app.register(rateLimit, {
+    max: env.RATE_LIMIT_MAX_PER_MINUTE,
+    timeWindow: "1 minute",
+    skipOnError: true
+  });
+}
 await app.register(sensible);
 await app.register(jwt, env.JWT_PRIVATE_KEY_BASE64 && env.JWT_PUBLIC_KEY_BASE64
   ? {
@@ -43,13 +57,19 @@ app.addHook("preHandler", async (request) => {
 });
 
 function getUserId(headers: Record<string, unknown>): string {
-  const authUser = (headers["x-auth-user-id"]);
+  const authUser = headers["x-auth-user-id"];
   if (typeof authUser === "string" && authUser.length > 0) {
     return authUser;
   }
   const userId = headers["x-user-id"];
   if (typeof userId === "string" && userId.length > 0) {
-    return userId;
+    if (env.ALLOW_X_USER_ID_HEADER || env.NODE_ENV !== "production") {
+      return userId;
+    }
+    throw app.httpErrors.unauthorized("x-user-id is disabled; sign in with a Bearer token");
+  }
+  if (env.NODE_ENV === "production") {
+    throw app.httpErrors.unauthorized("Authentication required");
   }
   return "00000000-0000-0000-0000-000000000001";
 }
@@ -91,6 +111,8 @@ async function signSession(user: { id: string; email: string; display_name: stri
 }
 
 app.get("/health", async () => ({ ok: true, env: env.NODE_ENV }));
+/** Same payload for reverse proxies that only mount /api (e.g. noteos.in via Caddy). */
+app.get("/api/health", async () => ({ ok: true, env: env.NODE_ENV }));
 
 app.get("/api/llm/status", async () => {
   const [azure, hostinger] = await Promise.all([
@@ -102,11 +124,21 @@ app.get("/api/llm/status", async () => {
     azure,
     hostinger,
     routes: llmRoutes(),
-    cloudFallbackConfigured: Boolean(env.CLOUD_LLM_BASE_URL && env.CLOUD_LLM_MODEL)
+    cloudFallbackConfigured: Boolean(env.CLOUD_LLM_BASE_URL && env.CLOUD_LLM_MODEL),
+    mosAssistant: {
+      baseUrl: env.AZURE_OLLAMA_BASE_URL,
+      model: env.AZURE_OLLAMA_MODEL,
+      numCtx: env.OLLAMA_NUM_CTX,
+      temperature: env.OLLAMA_ASSISTANT_TEMPERATURE,
+      systemPrompt: env.MOS_SYSTEM_PROMPT && env.MOS_SYSTEM_PROMPT.trim().length > 0 ? "custom" : "default"
+    }
   };
 });
 
 app.post("/api/auth/dev-login", async (request) => {
+  if (env.NODE_ENV === "production") {
+    throw app.httpErrors.notFound();
+  }
   const body = z.object({
     user_id: z.string().uuid(),
     email: z.string().email()
@@ -699,7 +731,17 @@ app.post("/api/assistant/chat", async (request) => {
   const body = z
     .object({
       prompt: z.string().min(1),
-      policy: z.enum(["private-fast", "coding", "deep-reasoning", "summarize", "embed", "vision-doc-analysis"]).default("coding"),
+      policy: z
+      .enum([
+        "life-os",
+        "private-fast",
+        "coding",
+        "deep-reasoning",
+        "summarize",
+        "embed",
+        "vision-doc-analysis"
+      ])
+      .default("life-os"),
       include_rag: z.boolean().default(true),
       rag_limit: z.coerce.number().int().min(1).max(20).default(8)
     })
@@ -743,7 +785,8 @@ ${ragRows
 
   const staticContext = await buildAssistantContext(userId);
   const context = [ragBlock, staticContext].filter(Boolean).join("\n\n---\n\n");
-  const completion = await runCompletion({ policy: body.policy, prompt: body.prompt, context });
+  /** Primary brain: always Azure Ollama + AZURE_OLLAMA_MODEL (e.g. gemma4:e4b) with /api/chat + m.OS system prompt. */
+  const completion = await runMosAssistantCompletion({ prompt: body.prompt, context });
 
   await query(
     `insert into assistant_sessions (user_id, prompt, response, provider, model, policy)
