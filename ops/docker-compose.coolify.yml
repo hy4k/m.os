@@ -1,0 +1,16 @@
+# Optional: merge with prod so Traefik (Coolify proxy) sees api + web.
+#   docker compose -f ops/docker-compose.prod.yml -f ops/docker-compose.coolify.yml --env-file .env up -d
+# Requires external network `coolify` (created by Coolify). Bare VPS: omit this file.
+networks:
+  coolify:
+    external: true
+
+services:
+  api:
+    networks:
+      - default
+      - coolify
+  web:
+    networks:
+      - default
+      - coolify

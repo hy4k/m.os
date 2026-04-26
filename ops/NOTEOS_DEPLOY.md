@@ -63,7 +63,18 @@ Then:
 docker compose -f ops/docker-compose.prod.yml --env-file .env up -d
 ```
 
-**Coolify path routing:** The compose file adds **Traefik labels** on **`api`** (`PathPrefix(/api)` → port **4000**, priority **100**) and **`web`** (`Host` only → port **3000**, priority **1**). Without a router on **`web`**, Traefik returns a short plaintext **404** for `https://your-domain/`. Set **`M_OS_PUBLIC_HOST`** in `.env` to your bare domain (e.g. `noteos.in`). Attach **`api`** and **`web`** to the **`coolify`** network.
+**On a Coolify host (Traefik must see the containers):** use the extra file so **`api`** and **`web`** join the existing **`coolify`** Docker network (required for Traefik discovery). If you deploy only `docker-compose.prod.yml` via SSH and never attach that network, `docker inspect m-os-web` will show **no** `traefik.*` labels taking effect from the proxy’s perspective.
+
+```bash
+docker compose \
+  -f ops/docker-compose.prod.yml \
+  -f ops/docker-compose.coolify.yml \
+  --env-file .env up -d --force-recreate api web
+```
+
+After recreate, confirm: `docker inspect m-os-web --format '{{json .Config.Labels}}' | grep traefik` and `docker inspect m-os-web --format '{{json .NetworkSettings.Networks}}' | grep coolify`.
+
+**Coolify path routing:** `docker-compose.prod.yml` adds **Traefik labels** on **`api`** (`PathPrefix(/api)` → port **4000**, priority **100**) and **`web`** (`Host` only → port **3000**, priority **1**). Without a router on **`web`**, Traefik returns a short plaintext **404** for `https://your-domain/`. Set **`M_OS_PUBLIC_HOST`** in `.env` to your bare domain (e.g. `noteos.in`).
 
 If you prefer the Coolify UI only, add FQDN **`/` →** port **3000** (web) and **`/api` →** port **4000** (api); you can omit duplicate labels if Coolify generates them.
 
