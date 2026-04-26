@@ -63,7 +63,11 @@ Then:
 docker compose -f ops/docker-compose.prod.yml --env-file .env up -d
 ```
 
-In Coolify, route **`/api` →** `http://<server-ip>:4400` and **`/` →** `http://<server-ip>:4300` (preserve the `/api` path). If a failed Caddy container exists from a previous run: `docker compose -f ops/docker-compose.prod.yml --env-file .env rm -f caddy` or `down` then `up -d` again without `edge`.
+**Coolify path routing:** The compose file adds **Traefik labels** on the **`api`** service so `Host(M_OS_PUBLIC_HOST)` + `PathPrefix(/api)` is served from container port **4000** (priority **100**, above catch‑all `/` → **web**). Set **`M_OS_PUBLIC_HOST`** in `.env` to your bare domain (e.g. `noteos.in`, no `https://`). Ensure the **`api`** container is attached to the **`coolify`** external network so Traefik can reach it.
+
+If you prefer configuring only in the Coolify UI instead, route **`/api` →** port **4000** (api) and **`/` →** port **3000** (web), preserving the `/api` path.
+
+If a failed Caddy container exists from a previous run: `docker compose -f ops/docker-compose.prod.yml --env-file .env rm -f caddy` or `down` then `up -d` again without `edge`.
 
 **If `curl http://127.0.0.1:4400/api/health` fails but `:4300` works:** check the API container and published ports:
 

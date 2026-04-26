@@ -1,41 +1,26 @@
-# Production-style stack for noteos.in (m.OS only).
-# From repo root:  docker compose -f ops/docker-compose.prod.yml up -d
-# Set secrets via .env (copy from .env.example) or compose overrides — never commit real secrets.
-#
-# • Bare VPS (nothing on :80): use Caddy for TLS
-#     docker compose -f ops/docker-compose.prod.yml --env-file .env --profile edge up -d
-# • Coolify / Traefik / anything already on :80/:443: do NOT start Caddy; publish API + web on localhost:
-#     docker compose -f ops/docker-compose.prod.yml --env-file .env up -d
-#   Set in .env for Coolify (Traefik must reach the host; not 127.0.0.1 from inside another container):
-#     M_OS_API_PORTS=0.0.0.0:4400:4000
-#     M_OS_WEB_PORTS=0.0.0.0:4300:3000
-#   Then proxy https://your-domain/api → host:4400, https://your-domain/ → host:4300 (preserve paths).
 services:
   postgres:
     image: pgvector/pgvector:pg16
     container_name: m-os-postgres
-    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-personal_llm_os}
-    volumes:
-      - m_os_pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-personal_llm_os}"]
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-personal_llm_os}
       interval: 5s
       timeout: 3s
       retries: 10
-
+    restart: unless-stopped
+    volumes:
+      - m_os_pgdata:/var/lib/postgresql/data
   api:
     build:
       context: ..
       dockerfile: ops/Dockerfile.api
     container_name: m-os-api
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
     environment:
       NODE_ENV: production
       PORT: 4000
@@ -53,49 +38,43 @@ services:
       ALLOW_X_USER_ID_HEADER: ${ALLOW_X_USER_ID_HEADER:-false}
       RATE_LIMIT_MAX_PER_MINUTE: ${RATE_LIMIT_MAX_PER_MINUTE:-200}
       UPLOAD_DIR: /data/uploads
+    expose:
+      - 4000
+    restart: unless-stopped
+    ports:
+      - ${M_OS_API_PORTS:-127.0.0.1:4400:4000}
     volumes:
       - m_os_uploads:/data/uploads
-    expose:
-      - "4000"
-    ports:
-      - "${M_OS_API_PORTS:-127.0.0.1:4400:4000}"
-
+    depends_on:
+      - postgres
+    # Coolify / Traefik: expose /api on the public host (priority over catch-all / → web).
+    # Set M_OS_PUBLIC_HOST to your bare domain (same as NEXT_PUBLIC_API_BASE_URL without https://).
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.m-os-api.rule=Host(`${M_OS_PUBLIC_HOST:-noteos.in}`) && PathPrefix(`/api`)
+      - traefik.http.routers.m-os-api.entrypoints=https
+      - traefik.http.routers.m-os-api.tls=true
+      - traefik.http.routers.m-os-api.tls.certresolver=letsencrypt
+      - traefik.http.routers.m-os-api.priority=100
+      - traefik.http.routers.m-os-api.service=m-os-api-svc
+      - traefik.http.services.m-os-api-svc.loadbalancer.server.port=4000
   web:
     build:
       context: ..
       dockerfile: ops/Dockerfile.web
     container_name: m-os-web
-    restart: unless-stopped
-    depends_on:
-      - api
     environment:
       NODE_ENV: production
-      # Browser-visible API origin (same host when behind Caddy: https://noteos.in)
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-https://noteos.in}
     expose:
-      - "3000"
-    ports:
-      - "${M_OS_WEB_PORTS:-127.0.0.1:4300:3000}"
-
-  caddy:
-    profiles:
-      - edge
-    image: caddy:2-alpine
-    container_name: m-os-caddy
+      - 3000
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
+      - ${M_OS_WEB_PORTS:-127.0.0.1:4300:3000}
     depends_on:
       - api
-      - web
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-
 volumes:
-  m_os_pgdata:
-  m_os_uploads:
-  caddy_data:
+  m_os_pgdata: 
+  m_os_uploads: 
+  caddy_data: 
   caddy_config:
