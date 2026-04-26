@@ -581,8 +581,23 @@ function SessionConsole(props: {
             {props.mode === "register" && (
               <input name="display_name" placeholder="Name" className="command-input rounded-2xl px-4 py-3 text-white" />
             )}
-            <input name="email" type="email" required placeholder="Email" className="command-input rounded-2xl px-4 py-3 text-white" />
-            <input name="password" type="password" required minLength={props.mode === "register" ? 10 : 1} placeholder="Password" className="command-input rounded-2xl px-4 py-3 text-white" />
+            <input
+              name="email"
+              type="email"
+              required
+              autoComplete="email"
+              placeholder="Email"
+              className="command-input rounded-2xl px-4 py-3 text-white"
+            />
+            <input
+              name="password"
+              type="password"
+              required
+              minLength={props.mode === "register" ? 10 : 1}
+              autoComplete={props.mode === "register" ? "new-password" : "current-password"}
+              placeholder="Password"
+              className="command-input rounded-2xl px-4 py-3 text-white"
+            />
             <button disabled={props.pending} className="rounded-2xl bg-white px-5 py-3 text-sm font-bold uppercase tracking-[0.18em] text-black transition hover:bg-cyan-100">
               {props.mode === "register" ? "Create" : "Unlock"}
             </button>
@@ -702,6 +717,7 @@ function TotpSecurityCard(props: {
                 type="password"
                 value={disablePassword}
                 onChange={(e) => setDisablePassword(e.target.value)}
+                autoComplete="current-password"
                 placeholder="Password to disable TOTP"
                 className="command-input flex-1 rounded-2xl px-4 py-3 text-sm text-white"
               />

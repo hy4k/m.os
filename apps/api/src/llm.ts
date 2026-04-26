@@ -215,12 +215,15 @@ export async function runCompletion(input: {
   };
 }
 
+const OLLAMA_STATUS_FETCH_MS = 12_000;
+
 export async function ollamaStatus(baseUrl: string, expectedModel?: string) {
   const startedAt = Date.now();
   try {
+    const signal = AbortSignal.timeout(OLLAMA_STATUS_FETCH_MS);
     const [versionResponse, tagsResponse] = await Promise.all([
-      fetch(`${baseUrl}/api/version`),
-      fetch(`${baseUrl}/api/tags`)
+      fetch(`${baseUrl}/api/version`, { signal }),
+      fetch(`${baseUrl}/api/tags`, { signal })
     ]);
 
     if (!versionResponse.ok || !tagsResponse.ok) {
