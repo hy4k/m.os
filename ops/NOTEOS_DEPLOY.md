@@ -37,10 +37,32 @@ From the **repo root** (or sync this tree on the server):
 
 ```bash
 docker compose -f ops/docker-compose.prod.yml --env-file .env build
+```
+
+**Bare VPS** (nothing else on ports 80/443 — Caddy terminates TLS):
+
+```bash
+docker compose -f ops/docker-compose.prod.yml --env-file .env --profile edge up -d
+```
+
+Caddy will request TLS certificates for `noteos.in` and `www.noteos.in` on first start (see `ops/Caddyfile`).
+
+**Coolify, Traefik, or anything already bound to :80 / :443** — do **not** start Caddy (omit `--profile edge`). Add to `.env` so the reverse proxy can reach the containers (from another Docker container, `127.0.0.1` on the host is wrong — use `0.0.0.0`):
+
+```bash
+M_OS_API_PORTS=0.0.0.0:4400:4000
+M_OS_WEB_PORTS=0.0.0.0:4300:3000
+CORS_ORIGIN=https://your-public-domain
+NEXT_PUBLIC_API_BASE_URL=https://your-public-domain
+```
+
+Then:
+
+```bash
 docker compose -f ops/docker-compose.prod.yml --env-file .env up -d
 ```
 
-Caddy will request TLS certificates for `noteos.in` and `www.noteos.in` on first start.
+In Coolify, route **`/api` →** `http://<server-ip>:4400` and **`/` →** `http://<server-ip>:4300` (preserve the `/api` path). If a failed Caddy container exists from a previous run: `docker compose -f ops/docker-compose.prod.yml --env-file .env rm -f caddy` or `down` then `up -d` again without `edge`.
 
 ## 3. Run database migrations and seed (first deploy)
 

@@ -2,7 +2,14 @@
 # From repo root:  docker compose -f ops/docker-compose.prod.yml up -d
 # Set secrets via .env (copy from .env.example) or compose overrides — never commit real secrets.
 #
-# Typical public URL: https://noteos.in  →  Caddy terminates TLS, routes /api/* to API, /* to web.
+# • Bare VPS (nothing on :80): use Caddy for TLS
+#     docker compose -f ops/docker-compose.prod.yml --env-file .env --profile edge up -d
+# • Coolify / Traefik / anything already on :80/:443: do NOT start Caddy; publish API + web on localhost:
+#     docker compose -f ops/docker-compose.prod.yml --env-file .env up -d
+#   Set in .env for Coolify (Traefik must reach the host; not 127.0.0.1 from inside another container):
+#     M_OS_API_PORTS=0.0.0.0:4400:4000
+#     M_OS_WEB_PORTS=0.0.0.0:4300:3000
+#   Then proxy https://your-domain/api → host:4400, https://your-domain/ → host:4300 (preserve paths).
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -50,6 +57,8 @@ services:
       - m_os_uploads:/data/uploads
     expose:
       - "4000"
+    ports:
+      - "${M_OS_API_PORTS:-127.0.0.1:4400:4000}"
 
   web:
     build:
@@ -65,8 +74,12 @@ services:
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-https://noteos.in}
     expose:
       - "3000"
+    ports:
+      - "${M_OS_WEB_PORTS:-127.0.0.1:4300:3000}"
 
   caddy:
+    profiles:
+      - edge
     image: caddy:2-alpine
     container_name: m-os-caddy
     restart: unless-stopped
