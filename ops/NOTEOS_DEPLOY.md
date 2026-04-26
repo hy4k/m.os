@@ -33,6 +33,8 @@ cp .env.example .env
 
 **Next.js browser API URL:** `NEXT_PUBLIC_*` is **embedded when the web image is built**, not when the container starts. After changing `NEXT_PUBLIC_API_BASE_URL`, run **`docker compose build web`** (or rebuild in Coolify) so the UI calls `https://your-domain` instead of the default `http://localhost:4000`.
 
+**SSR / gateway timeouts:** The home page loads data on the **server** via `loadCommandCenter()`. The **`web`** container must use **`API_INTERNAL_BASE_URL=http://api:4000`** (set in `docker-compose.prod.yml`) so those fetches hit the **`api`** service on the Compose network. If the server used only `https://your-domain`, requests can **hairpin** through Traefik and **hang** → **504** and `wget` to `:3000` timing out.
+
 ## 2. Build and start (Docker Compose)
 
 From the **repo root** (or sync this tree on the server):

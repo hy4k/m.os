@@ -1,7 +1,21 @@
 export const OWNER_ID = "00000000-0000-0000-0000-000000000001";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
 const SESSION_KEY = "mos_session";
+
+/**
+ * Browser uses NEXT_PUBLIC_* (public origin). Server-side (RSC) must reach the API on the Docker
+ * network — set API_INTERNAL_BASE_URL=http://api:4000 on the web container; avoid hairpin via https://your-domain.
+ */
+function apiBaseUrl(): string {
+  if (typeof window !== "undefined") {
+    return process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
+  }
+  return (
+    process.env.API_INTERNAL_BASE_URL ??
+    process.env.NEXT_PUBLIC_API_BASE_URL ??
+    "http://127.0.0.1:4000"
+  );
+}
 
 export type Project = {
   id: string;
@@ -223,7 +237,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   headers.set("Content-Type", "application/json");
   Object.entries(authHeaders()).forEach(([key, value]) => headers.set(key, value));
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(`${apiBaseUrl()}${path}`, {
     ...init,
     headers,
     cache: "no-store"
@@ -290,7 +304,7 @@ export async function register(input: { email: string; password: string; display
 
 export async function login(input: { email: string; password: string; totp_code?: string }) {
   const headers = new Headers({ "Content-Type": "application/json" });
-  const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+  const response = await fetch(`${apiBaseUrl()}/api/auth/login`, {
     method: "POST",
     headers,
     body: JSON.stringify({
@@ -412,7 +426,7 @@ export async function uploadUserFile(file: File, projectId?: string) {
   } else {
     headers.set("x-user-id", OWNER_ID);
   }
-  const response = await fetch(`${API_BASE_URL}/api/files/upload`, {
+  const response = await fetch(`${apiBaseUrl()}/api/files/upload`, {
     method: "POST",
     headers,
     body: fd,
@@ -432,7 +446,7 @@ export async function downloadUserFileBlob(id: string) {
   } else {
     headers.set("x-user-id", OWNER_ID);
   }
-  const response = await fetch(`${API_BASE_URL}/api/files/${id}/download`, {
+  const response = await fetch(`${apiBaseUrl()}/api/files/${id}/download`, {
     headers,
     cache: "no-store"
   });
