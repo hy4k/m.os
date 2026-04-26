@@ -63,9 +63,9 @@ Then:
 docker compose -f ops/docker-compose.prod.yml --env-file .env up -d
 ```
 
-**Coolify path routing:** The compose file adds **Traefik labels** on the **`api`** service so `Host(M_OS_PUBLIC_HOST)` + `PathPrefix(/api)` is served from container port **4000** (priority **100**, above catch‑all `/` → **web**). Set **`M_OS_PUBLIC_HOST`** in `.env` to your bare domain (e.g. `noteos.in`, no `https://`). Ensure the **`api`** container is attached to the **`coolify`** external network so Traefik can reach it.
+**Coolify path routing:** The compose file adds **Traefik labels** on **`api`** (`PathPrefix(/api)` → port **4000**, priority **100**) and **`web`** (`Host` only → port **3000**, priority **1**). Without a router on **`web`**, Traefik returns a short plaintext **404** for `https://your-domain/`. Set **`M_OS_PUBLIC_HOST`** in `.env` to your bare domain (e.g. `noteos.in`). Attach **`api`** and **`web`** to the **`coolify`** network.
 
-If you prefer configuring only in the Coolify UI instead, route **`/api` →** port **4000** (api) and **`/` →** port **3000** (web), preserving the `/api` path.
+If you prefer the Coolify UI only, add FQDN **`/` →** port **3000** (web) and **`/api` →** port **4000** (api); you can omit duplicate labels if Coolify generates them.
 
 If a failed Caddy container exists from a previous run: `docker compose -f ops/docker-compose.prod.yml --env-file .env rm -f caddy` or `down` then `up -d` again without `edge`.
 

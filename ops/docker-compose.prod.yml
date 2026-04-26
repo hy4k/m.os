@@ -73,6 +73,16 @@ services:
       - ${M_OS_WEB_PORTS:-127.0.0.1:4300:3000}
     depends_on:
       - api
+    # Coolify / Traefik: serve Next.js for the public host. Priority 1 so /api/* stays on m-os-api (100).
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.m-os-web.rule=Host(`${M_OS_PUBLIC_HOST:-noteos.in}`)
+      - traefik.http.routers.m-os-web.entrypoints=https
+      - traefik.http.routers.m-os-web.tls=true
+      - traefik.http.routers.m-os-web.tls.certresolver=letsencrypt
+      - traefik.http.routers.m-os-web.priority=1
+      - traefik.http.routers.m-os-web.service=m-os-web-svc
+      - traefik.http.services.m-os-web-svc.loadbalancer.server.port=3000
 volumes:
   m_os_pgdata: 
   m_os_uploads: 
