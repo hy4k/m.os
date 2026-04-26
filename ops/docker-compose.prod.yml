@@ -62,10 +62,12 @@ services:
     build:
       context: ..
       dockerfile: ops/Dockerfile.web
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-https://noteos.in}
     container_name: m-os-web
     environment:
       NODE_ENV: production
-      # SSR in m-os-web must call the api service by Docker DNS (not https://public host — hairpin hang).
+      # RSC must call api over Docker DNS — never only https://public (hairpin → gateway timeouts).
       API_INTERNAL_BASE_URL: http://api:4000
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-https://noteos.in}
     expose:
