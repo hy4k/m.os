@@ -47,9 +47,10 @@ docker compose -f ops/docker-compose.prod.yml --env-file .env --profile edge up 
 
 Caddy will request TLS certificates for `noteos.in` and `www.noteos.in` on first start (see `ops/Caddyfile`).
 
-**Coolify, Traefik, or anything already bound to :80 / :443** — do **not** start Caddy (omit `--profile edge`). Add to `.env` so the reverse proxy can reach the containers (from another Docker container, `127.0.0.1` on the host is wrong — use `0.0.0.0`):
+**Coolify, Traefik, or anything already bound to :80 / :443** — do **not** start Caddy (omit `--profile edge`). Put the lines below **in your `.env` file** (not only in the shell). Plain `VAR=value` in the shell is **not** visible to the `docker compose` process unless you **`export`** every variable; using `.env` avoids that.
 
 ```bash
+# append to .env (example domain)
 M_OS_API_PORTS=0.0.0.0:4400:4000
 M_OS_WEB_PORTS=0.0.0.0:4300:3000
 CORS_ORIGIN=https://your-public-domain
@@ -63,6 +64,16 @@ docker compose -f ops/docker-compose.prod.yml --env-file .env up -d
 ```
 
 In Coolify, route **`/api` →** `http://<server-ip>:4400` and **`/` →** `http://<server-ip>:4300` (preserve the `/api` path). If a failed Caddy container exists from a previous run: `docker compose -f ops/docker-compose.prod.yml --env-file .env rm -f caddy` or `down` then `up -d` again without `edge`.
+
+**If `curl http://127.0.0.1:4400/api/health` fails but `:4300` works:** check the API container and published ports:
+
+```bash
+docker ps -a --filter name=m-os-api
+docker logs m-os-api --tail 80
+docker compose -f ops/docker-compose.prod.yml --env-file .env config | sed -n '/^  api:/,/^  [a-z]/p'
+```
+
+You should see `ports:` with `4400:4000` under `api`. If `m-os-api` is `Exited`, fix the error in logs (often missing `JWT_*`, `MASTER_ENCRYPTION_KEY_BASE64`, or `DATABASE_URL` / Postgres).
 
 ## 3. Run database migrations and seed (first deploy)
 
