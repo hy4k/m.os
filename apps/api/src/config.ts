@@ -41,7 +41,9 @@ const envSchema = z.object({
     .default("true")
     .transform((s) => s === "true" || s === "1"),
   /** Global API requests per IP per minute (production). 0 = disabled. */
-  RATE_LIMIT_MAX_PER_MINUTE: z.coerce.number().int().min(0).default(0)
+  RATE_LIMIT_MAX_PER_MINUTE: z.coerce.number().int().min(0).default(0),
+  /** Local directory for user uploads (multipart). In Docker use a mounted volume, e.g. /data/uploads. */
+  UPLOAD_DIR: z.string().default("./data/uploads")
 });
 
 export const env = envSchema.parse(process.env);

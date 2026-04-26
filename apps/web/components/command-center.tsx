@@ -36,15 +36,25 @@ import {
   createDiary,
   createNote,
   createPlatformConnection,
+  createPlayground,
   createProject,
   createProjectEnvironment,
   createTodo,
+  downloadUserFileBlob,
+  getAuthMe,
   getStoredSession,
   importGithubRepos,
   loadCommandCenter,
   loadLlmStatus,
   login,
   register,
+  totpDisable,
+  totpEnrollStart,
+  totpEnrollVerify,
+  TotpRequiredError,
+  updatePlayground,
+  uploadUserFile,
+  type AuthMe,
   type AuthSession,
   type AuditEvent,
   type Credential,
@@ -57,7 +67,8 @@ import {
   type Project,
   type ProjectEnvironment,
   type ProjectLink,
-  type Todo
+  type Todo,
+  type UserFileRecord
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -73,6 +84,7 @@ type CommandCenterData = {
   platformConnections: PlatformConnection[];
   environments: ProjectEnvironment[];
   deploymentNotes: DeploymentNote[];
+  files: UserFileRecord[];
 };
 
 type Props = {
@@ -156,6 +168,8 @@ export function CommandCenter({ initialData, live }: Props) {
   const [llmStatus, setLlmStatus] = useState<LlmStatus | null>(null);
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [authMessage, setAuthMessage] = useState("Sign in to write into your private workspace.");
+  const [totpChallenge, setTotpChallenge] = useState<{ email: string; password: string } | null>(null);
+  const [me, setMe] = useState<AuthMe | null>(null);
   const [opsMessage, setOpsMessage] = useState("");
   const [isPending, startTransition] = useTransition();
 
@@ -165,6 +179,16 @@ export function CommandCenter({ initialData, live }: Props) {
       .then(setLlmStatus)
       .catch(() => setLlmStatus(null));
   }, []);
+
+  useEffect(() => {
+    if (!session || !live) {
+      setMe(null);
+      return;
+    }
+    getAuthMe()
+      .then(setMe)
+      .catch(() => setMe(null));
+  }, [session, live]);
 
   const stats = useMemo(() => [
     { label: "Projects", value: data.projects.length, icon: Network },
@@ -243,20 +267,52 @@ export function CommandCenter({ initialData, live }: Props) {
 
   async function submitAuth(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const formEl = event.currentTarget;
+    const form = new FormData(formEl);
     const email = String(form.get("email") ?? "");
     const password = String(form.get("password") ?? "");
     const display_name = String(form.get("display_name") ?? "");
+    const totp_code = String(form.get("totp_code") ?? "").trim();
 
     setAuthMessage("Opening private session...");
     startTransition(async () => {
       try {
-        const nextSession = authMode === "register"
-          ? await register({ email, password, display_name: display_name || undefined })
-          : await login({ email, password });
+        if (authMode === "register") {
+          setTotpChallenge(null);
+          const nextSession = await register({ email, password, display_name: display_name || undefined });
+          setSession(nextSession);
+          setAuthMessage(`Signed in as ${nextSession.user.email}`);
+          formEl.reset();
+          return;
+        }
+
+        if (totpChallenge) {
+          if (!/^\d{6}$/.test(totp_code)) {
+            setAuthMessage("Enter the 6-digit authenticator code.");
+            return;
+          }
+          const nextSession = await login({
+            email: totpChallenge.email,
+            password: totpChallenge.password,
+            totp_code
+          });
+          setTotpChallenge(null);
+          setSession(nextSession);
+          setAuthMessage(`Signed in as ${nextSession.user.email}`);
+          formEl.reset();
+          return;
+        }
+
+        const nextSession = await login({ email, password });
         setSession(nextSession);
         setAuthMessage(`Signed in as ${nextSession.user.email}`);
+        formEl.reset();
       } catch (error) {
+        if (error instanceof TotpRequiredError) {
+          setTotpChallenge({ email, password });
+          setAuthMessage("Enter the 6-digit code from your authenticator app.");
+          return;
+        }
         setAuthMessage(error instanceof Error ? error.message : "Authentication failed");
       }
     });
@@ -265,6 +321,8 @@ export function CommandCenter({ initialData, live }: Props) {
   function signOut() {
     clearSession();
     setSession(null);
+    setTotpChallenge(null);
+    setMe(null);
     setAuthMessage("Signed out. Preview mode is still available.");
   }
 
@@ -293,10 +351,30 @@ export function CommandCenter({ initialData, live }: Props) {
           message={authMessage}
           pending={isPending}
           session={session}
-          onModeChange={setAuthMode}
+          totpChallenge={Boolean(totpChallenge)}
+          onModeChange={(mode) => {
+            setAuthMode(mode);
+            setTotpChallenge(null);
+          }}
           onSubmit={submitAuth}
           onSignOut={signOut}
+          onCancelTotp={() => {
+            setTotpChallenge(null);
+            setAuthMessage("Sign in cancelled. Enter email and password again.");
+          }}
         />
+        {session && live ? (
+          <TotpSecurityCard
+            me={me}
+            pending={isPending}
+            onMeUpdated={() => {
+              getAuthMe()
+                .then(setMe)
+                .catch(() => setMe(null));
+            }}
+            onMessage={setAuthMessage}
+          />
+        ) : null}
         <LlmRuntimePanel status={llmStatus} />
         <Hero />
         <PlatformConstellation />
@@ -351,7 +429,30 @@ export function CommandCenter({ initialData, live }: Props) {
           <IntelligenceGrid data={data} />
         </div>
         <LifePanorama notes={data.notes} />
-        <ProjectIntelligence data={data} />
+        <ProjectIntelligence
+          data={data}
+          pending={isPending}
+          onPlaygroundStageChange={(id, stage) => {
+            startTransition(async () => {
+              try {
+                if (!live) {
+                  setData((d) => ({
+                    ...d,
+                    playgrounds: d.playgrounds.map((p) => (p.id === id ? { ...p, stage } : p))
+                  }));
+                  return;
+                }
+                const updated = await updatePlayground(id, { stage });
+                setData((d) => ({
+                  ...d,
+                  playgrounds: d.playgrounds.map((p) => (p.id === id ? { ...p, ...updated } : p))
+                }));
+              } catch {
+                setOpsMessage("Could not update playground stage.");
+              }
+            });
+          }}
+        />
         <OperationsCommandStrip
           data={data}
           live={live}
@@ -422,10 +523,14 @@ function SessionConsole(props: {
   message: string;
   pending: boolean;
   session: AuthSession | null;
+  totpChallenge: boolean;
   onModeChange: (mode: "login" | "register") => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onSignOut: () => void;
+  onCancelTotp: () => void;
 }) {
+  const showTotpStep = props.totpChallenge && props.mode === "login" && !props.session;
+
   return (
     <section className="glass-panel relative overflow-hidden rounded-[2rem] p-5">
       <div className="absolute -right-16 -top-16 h-40 w-40 rounded-full bg-emerald-300/10 blur-3xl" />
@@ -433,7 +538,7 @@ function SessionConsole(props: {
         <div>
           <p className="text-[10px] uppercase tracking-[0.35em] text-white/30">Private Session</p>
           <h2 className="mt-1 font-display text-3xl text-white">
-            {props.session ? props.session.user.email : "Unlock m.OS"}
+            {props.session ? props.session.user.email : showTotpStep ? "Authenticator" : "Unlock m.OS"}
           </h2>
           <p className="mt-2 text-sm text-white/42">{props.message}</p>
         </div>
@@ -445,6 +550,32 @@ function SessionConsole(props: {
           >
             Lock Session
           </button>
+        ) : showTotpStep ? (
+          <form onSubmit={props.onSubmit} className="flex flex-1 flex-col gap-3 sm:flex-row sm:items-center lg:max-w-2xl">
+            <input
+              name="totp_code"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              pattern="[0-9]{6}"
+              maxLength={6}
+              required
+              placeholder="6-digit code"
+              className="command-input rounded-2xl px-4 py-3 text-white sm:flex-1"
+            />
+            <button
+              disabled={props.pending}
+              className="rounded-2xl bg-white px-5 py-3 text-sm font-bold uppercase tracking-[0.18em] text-black transition hover:bg-cyan-100"
+            >
+              Confirm
+            </button>
+            <button
+              type="button"
+              onClick={props.onCancelTotp}
+              className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-xs uppercase tracking-[0.18em] text-white/50 transition hover:text-white"
+            >
+              Back
+            </button>
+          </form>
         ) : (
           <form onSubmit={props.onSubmit} className="grid flex-1 gap-3 lg:max-w-4xl lg:grid-cols-[1fr_1fr_1fr_auto]">
             {props.mode === "register" && (
@@ -464,6 +595,142 @@ function SessionConsole(props: {
             </button>
           </form>
         )}
+      </div>
+    </section>
+  );
+}
+
+function TotpSecurityCard(props: {
+  me: AuthMe | null;
+  pending: boolean;
+  onMeUpdated: () => void;
+  onMessage: (value: string) => void;
+}) {
+  const [enroll, setEnroll] = useState<{ otpauth_url: string; secret: string } | null>(null);
+  const [disablePassword, setDisablePassword] = useState("");
+  const [cardPending, startCardTransition] = useTransition();
+  const busy = props.pending || cardPending;
+
+  if (!props.me) {
+    return null;
+  }
+
+  return (
+    <section className="glass-panel relative overflow-hidden rounded-[2rem] p-5">
+      <div className="absolute -right-12 -top-12 h-36 w-36 rounded-full bg-violet-300/10 blur-3xl" />
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.35em] text-white/30">Authenticator (TOTP)</p>
+          <h3 className="mt-1 font-display text-2xl text-white">Second factor</h3>
+          <p className="mt-2 text-sm text-white/42">
+            {props.me.totp_enabled
+              ? "Your account requires a 6-digit code from an authenticator app when you sign in."
+              : props.me.totp_enrollment_pending
+                ? "Finish enrollment by entering a code from your app."
+                : "Add an authenticator app for stronger sign-in."}
+          </p>
+        </div>
+        <div className="flex max-w-xl flex-1 flex-col gap-3">
+          {!props.me.totp_enabled && !enroll && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                props.onMessage("");
+                startCardTransition(async () => {
+                  try {
+                    const started = await totpEnrollStart();
+                    setEnroll(started);
+                    props.onMessage("Scan the otpauth URL or enter the secret manually, then confirm with a code.");
+                  } catch (e) {
+                    props.onMessage(e instanceof Error ? e.message : "Could not start TOTP enrollment.");
+                  }
+                });
+              }}
+              className="rounded-2xl bg-white px-4 py-3 text-xs font-bold uppercase tracking-[0.16em] text-black"
+            >
+              Start enrollment
+            </button>
+          )}
+          {enroll && !props.me.totp_enabled && (
+            <div className="space-y-2 rounded-2xl border border-white/10 bg-black/20 p-4 text-xs text-white/55">
+              <div className="break-all font-mono text-[11px] text-cyan-100/70">{enroll.otpauth_url}</div>
+              <div className="font-mono text-[11px] text-white/40">Secret: {enroll.secret}</div>
+              <form
+                className="mt-3 flex flex-wrap gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const fd = new FormData(e.currentTarget);
+                  const code = String(fd.get("enroll_code") ?? "").trim();
+                  if (!/^\d{6}$/.test(code)) {
+                    props.onMessage("Enter a 6-digit code.");
+                    return;
+                  }
+                  startCardTransition(async () => {
+                    try {
+                      await totpEnrollVerify(code);
+                      setEnroll(null);
+                      props.onMeUpdated();
+                      props.onMessage("Authenticator enabled.");
+                    } catch (err) {
+                      props.onMessage(err instanceof Error ? err.message : "Verification failed.");
+                    }
+                  });
+                }}
+              >
+                <input
+                  name="enroll_code"
+                  inputMode="numeric"
+                  pattern="[0-9]{6}"
+                  maxLength={6}
+                  placeholder="Code"
+                  className="command-input rounded-xl px-3 py-2 text-white"
+                />
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="rounded-xl border border-white/15 bg-white/[0.08] px-3 py-2 text-[10px] font-bold uppercase tracking-[0.14em] text-white"
+                >
+                  Confirm
+                </button>
+              </form>
+            </div>
+          )}
+          {props.me.totp_enabled && (
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+              <input
+                type="password"
+                value={disablePassword}
+                onChange={(e) => setDisablePassword(e.target.value)}
+                placeholder="Password to disable TOTP"
+                className="command-input flex-1 rounded-2xl px-4 py-3 text-sm text-white"
+              />
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  if (!disablePassword) {
+                    props.onMessage("Password required to disable TOTP.");
+                    return;
+                  }
+                  startCardTransition(async () => {
+                    try {
+                      await totpDisable(disablePassword);
+                      setDisablePassword("");
+                      props.onMeUpdated();
+                      props.onMessage("Authenticator disabled.");
+                    } catch (err) {
+                      props.onMessage(err instanceof Error ? err.message : "Could not disable TOTP.");
+                    }
+                  });
+                }}
+                className="rounded-2xl border border-rose-300/25 bg-rose-300/[0.08] px-4 py-3 text-xs font-bold uppercase tracking-[0.14em] text-rose-100/80"
+              >
+                Disable
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </section>
   );
@@ -905,7 +1172,15 @@ function IntelligenceGrid({ data }: { data: CommandCenterData }) {
   );
 }
 
-function ProjectIntelligence({ data }: { data: CommandCenterData }) {
+function ProjectIntelligence({
+  data,
+  pending,
+  onPlaygroundStageChange
+}: {
+  data: CommandCenterData;
+  pending: boolean;
+  onPlaygroundStageChange: (id: string, stage: Playground["stage"]) => void;
+}) {
   return (
     <section className="grid gap-6 xl:grid-cols-[1fr_1fr]">
       <div className="glass-panel relative min-h-96 overflow-hidden rounded-[2.5rem] p-6">
@@ -960,14 +1235,23 @@ function ProjectIntelligence({ data }: { data: CommandCenterData }) {
         <div className="mt-6 grid gap-3">
           {data.playgrounds.slice(0, 4).map((playground) => (
             <div key={playground.id} className="rounded-2xl border border-white/10 bg-white/[0.04] p-4 transition hover:bg-white/[0.06]">
-              <div className="flex items-center justify-between gap-4">
-                <div>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0 flex-1">
                   <div className="font-medium text-white/90">{playground.title}</div>
                   <div className="mt-1 text-sm text-white/40">{playground.project_name ?? playground.current_focus ?? "unlinked"}</div>
                 </div>
-                <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-white/35">
-                  {playground.stage}
-                </span>
+                <select
+                  value={playground.stage}
+                  disabled={pending}
+                  onChange={(e) => onPlaygroundStageChange(playground.id, e.target.value as Playground["stage"])}
+                  className="command-input shrink-0 rounded-full border border-white/10 bg-black/30 px-3 py-1.5 text-[10px] uppercase tracking-[0.12em] text-white/80"
+                >
+                  {(["seed", "research", "prototype", "build", "paused", "launched"] as const).map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="mt-3 text-sm leading-6 text-white/45">{playground.brief ?? "No brief yet."}</div>
             </div>
@@ -1266,6 +1550,167 @@ function OperationsCommandStrip(props: {
           onSubmit={(e) => {
             e.preventDefault();
             const fd = new FormData(e.currentTarget);
+            const title = String(fd.get("pg_title") ?? "").trim();
+            if (!title) {
+              onMessage("Playground needs a title.");
+              return;
+            }
+            const projectId = String(fd.get("pg_project_id") ?? "").trim();
+            const brief = String(fd.get("pg_brief") ?? "").trim();
+            const stage = String(fd.get("pg_stage") ?? "seed");
+            const project = data.projects.find((p) => p.id === projectId);
+            startTransition(async () => {
+              try {
+                if (live) {
+                  await createPlayground({
+                    project_id: projectId || undefined,
+                    title,
+                    brief: brief || undefined,
+                    stage: stage as Playground["stage"]
+                  });
+                  onMessage("Playground created.");
+                  onRefresh();
+                } else {
+                  addDemoItem("playgrounds", {
+                    id: `local-pg-${Date.now()}`,
+                    project_id: projectId || undefined,
+                    project_name: project?.name,
+                    title,
+                    brief: brief || undefined,
+                    stage: stage as Playground["stage"],
+                    next_actions: []
+                  });
+                  onMessage("Preview: playground added locally.");
+                }
+                e.currentTarget.reset();
+              } catch (err) {
+                onMessage(err instanceof Error ? err.message : "Could not create playground.");
+              }
+            });
+          }}
+        >
+          <p className="text-[10px] uppercase tracking-[0.3em] text-white/30">Playground</p>
+          <p className="text-xs text-white/45">Quick-create an idea board linked to a project.</p>
+          <select name="pg_project_id" className="command-input w-full rounded-2xl px-3 py-2 text-sm text-white">
+            <option value="">Project (optional)</option>
+            {data.projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          <input name="pg_title" required placeholder="Title" className="command-input w-full rounded-2xl px-3 py-2 text-sm text-white" />
+          <input name="pg_brief" placeholder="Brief" className="command-input w-full rounded-2xl px-3 py-2 text-sm text-white" />
+          <select name="pg_stage" className="command-input w-full rounded-2xl px-3 py-2 text-sm text-white" defaultValue="seed">
+            <option value="seed">seed</option>
+            <option value="research">research</option>
+            <option value="prototype">prototype</option>
+            <option value="build">build</option>
+            <option value="paused">paused</option>
+            <option value="launched">launched</option>
+          </select>
+          <button
+            type="submit"
+            disabled={props.pending}
+            className="w-full rounded-2xl bg-white px-3 py-2 text-xs font-bold uppercase tracking-[0.14em] text-black"
+          >
+            Create playground
+          </button>
+        </form>
+
+        <form
+          className="glass-panel space-y-3 rounded-3xl p-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const fd = new FormData(e.currentTarget);
+            const file = fd.get("user_file");
+            if (!(file instanceof File) || file.size === 0) {
+              onMessage("Choose a file to upload.");
+              return;
+            }
+            const projectId = String(fd.get("file_project_id") ?? "").trim();
+            startTransition(async () => {
+              try {
+                if (live) {
+                  await uploadUserFile(file, projectId || undefined);
+                  onMessage("File uploaded.");
+                  onRefresh();
+                } else {
+                  addDemoItem("files", {
+                    id: `local-file-${Date.now()}`,
+                    file_name: file.name,
+                    mime_type: file.type || null,
+                    size_bytes: file.size,
+                    project_id: projectId || null,
+                    created_at: new Date().toISOString()
+                  });
+                  onMessage("Preview: file recorded locally.");
+                }
+                e.currentTarget.reset();
+              } catch (err) {
+                onMessage(err instanceof Error ? err.message : "Upload failed.");
+              }
+            });
+          }}
+        >
+          <p className="text-[10px] uppercase tracking-[0.3em] text-white/30">Files</p>
+          <p className="text-xs text-white/45">Uploads stay on the API host ({live ? "live" : "preview"}).</p>
+          <select name="file_project_id" className="command-input w-full rounded-2xl px-3 py-2 text-sm text-white">
+            <option value="">Project (optional)</option>
+            {data.projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          <input name="user_file" type="file" className="w-full text-xs text-white/60 file:mr-3 file:rounded-xl file:border-0 file:bg-white/10 file:px-3 file:py-2 file:text-white" />
+          <button
+            type="submit"
+            disabled={props.pending}
+            className="w-full rounded-2xl bg-white px-3 py-2 text-xs font-bold uppercase tracking-[0.14em] text-black"
+          >
+            Upload
+          </button>
+          <div className="space-y-1 border-t border-white/5 pt-3">
+            <p className="text-[10px] uppercase tracking-[0.2em] text-white/30">Recent</p>
+            {data.files.slice(0, 5).map((f) => (
+              <div key={f.id} className="flex items-center justify-between gap-2 text-[11px] text-white/50">
+                <span className="truncate">{f.file_name}</span>
+                {live ? (
+                  <button
+                    type="button"
+                    disabled={props.pending}
+                    className="shrink-0 text-cyan-200/80 hover:text-cyan-100"
+                    onClick={() => {
+                      startTransition(async () => {
+                        try {
+                          const blob = await downloadUserFileBlob(f.id);
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement("a");
+                          a.href = url;
+                          a.download = f.file_name;
+                          a.click();
+                          URL.revokeObjectURL(url);
+                        } catch {
+                          onMessage("Download failed.");
+                        }
+                      });
+                    }}
+                  >
+                    Get
+                  </button>
+                ) : null}
+              </div>
+            ))}
+            {data.files.length === 0 && <p className="text-[11px] text-white/30">No files yet.</p>}
+          </div>
+        </form>
+
+        <form
+          className="glass-panel space-y-3 rounded-3xl p-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const fd = new FormData(e.currentTarget);
             const projectId = String(fd.get("gh_project_id") ?? "");
             if (!projectId) {
               onMessage("Select a m.OS project for these repos.");
@@ -1482,7 +1927,22 @@ function ListPanel({ title, icon: Icon, items }: { title: string; icon: LucideIc
 }
 
 function SystemFootage({ events }: { events: AuditEvent[] }) {
-  const visibleEvents = events.slice(0, 4);
+  const [actionQ, setActionQ] = useState("");
+  const [resourceQ, setResourceQ] = useState("");
+  const filtered = useMemo(() => {
+    const a = actionQ.trim().toLowerCase();
+    const r = resourceQ.trim().toLowerCase();
+    return events.filter((e) => {
+      if (a && !e.action.toLowerCase().includes(a)) {
+        return false;
+      }
+      if (r && !e.resource_type.toLowerCase().includes(r)) {
+        return false;
+      }
+      return true;
+    });
+  }, [events, actionQ, resourceQ]);
+  const visibleEvents = filtered.slice(0, 12);
   return (
     <div className="glass-panel relative min-h-80 overflow-hidden rounded-[2.5rem] p-5">
       <div className="absolute inset-x-0 top-0 h-12 border-b border-white/10 bg-black/10">
@@ -1493,9 +1953,25 @@ function SystemFootage({ events }: { events: AuditEvent[] }) {
         </div>
       </div>
       <div className="absolute -right-12 -top-12 h-48 w-48 rounded-full bg-violet-300/10 blur-3xl" />
-      <div className="mt-12 flex items-center gap-3">
-        <Search className="h-5 w-5 text-violet-200" />
-        <h3 className="font-display text-3xl">System Footage</h3>
+      <div className="mt-12 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3">
+          <Search className="h-5 w-5 text-violet-200" />
+          <h3 className="font-display text-3xl">System Footage</h3>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <input
+            value={actionQ}
+            onChange={(e) => setActionQ(e.target.value)}
+            placeholder="Filter action"
+            className="command-input min-w-[8rem] rounded-xl px-3 py-2 text-xs text-white"
+          />
+          <input
+            value={resourceQ}
+            onChange={(e) => setResourceQ(e.target.value)}
+            placeholder="Resource type"
+            className="command-input min-w-[8rem] rounded-xl px-3 py-2 text-xs text-white"
+          />
+        </div>
       </div>
       <div className="mt-6 space-y-3">
         {visibleEvents.map((item, index) => (
@@ -1508,13 +1984,14 @@ function SystemFootage({ events }: { events: AuditEvent[] }) {
               </span>
             </div>
             <div className="mt-2 text-xs leading-6 text-white/38">
-              {item.resource_type} - {formatTimestamp(item.created_at)}
+              {item.resource_type}
+              {item.resource_id ? ` · ${item.resource_id}` : ""} - {formatTimestamp(item.created_at)}
             </div>
           </div>
         ))}
         {visibleEvents.length === 0 && (
           <div className="rounded-2xl border border-dashed border-white/10 p-5 text-sm text-white/35">
-            No footage recorded yet.
+            {events.length === 0 ? "No footage recorded yet." : "No events match these filters."}
           </div>
         )}
       </div>

@@ -1,4 +1,4 @@
-import type { AuditEvent, Credential, DeploymentNote, DiaryEntry, KnowledgeItem, PlatformConnection, Playground, Project, ProjectEnvironment, ProjectLink, Todo } from "./api";
+import type { AuditEvent, Credential, DeploymentNote, DiaryEntry, KnowledgeItem, PlatformConnection, Playground, Project, ProjectEnvironment, ProjectLink, Todo, UserFileRecord } from "./api";
 
 export const demoData: {
   projects: Project[];
@@ -12,6 +12,7 @@ export const demoData: {
   platformConnections: PlatformConnection[];
   environments: ProjectEnvironment[];
   deploymentNotes: DeploymentNote[];
+  files: UserFileRecord[];
 } = {
   projects: [
     {
@@ -175,5 +176,6 @@ export const demoData: {
       status: "succeeded",
       version_ref: "local-main"
     }
-  ]
+  ],
+  files: []
 };

@@ -44,19 +44,54 @@ Caddy will request TLS certificates for `noteos.in` and `www.noteos.in` on first
 
 ## 3. Run database migrations and seed (first deploy)
 
-Migrations must run **after** Postgres is up (API container can run migrate; it has `node` and the compiled `dist`).
+What runs: `apps/api`’s `migrate.js` applies `packages/db/schema.sql` (idempotent base), then every `packages/db/migrations/*.sql` file **once**, tracked in table `schema_migrations`.
 
-```bash
-docker compose -f ops/docker-compose.prod.yml exec api node apps/api/dist/migrate.js
-```
+### On the VPS over SSH (Hostinger)
+
+1. SSH in (Hostinger hPanel → SSH access, or your key):  
+   `ssh <user>@<your-server-ip>`
+2. Go to the directory that contains this repo (the same place you ran `docker compose`):
+   `cd /path/to/personal-llm-os` (adjust path).
+3. Ensure the stack is up and **Postgres is healthy**:
+   `docker compose -f ops/docker-compose.prod.yml --env-file .env ps`
+4. Run migrations. Easiest: **one script** from repo root (uses `.env` if present). The script uses `docker compose run` so it **starts Postgres automatically** — you do **not** need `docker compose up` or a running `api` container first:
+   ```bash
+   chmod +x ops/scripts/migrate-docker-prod.sh
+   ./ops/scripts/migrate-docker-prod.sh
+   ```
+   If the API image was never built on this host, the script runs `build api` (skip later with `SKIP_IMAGE_BUILD=1`).
+   If you already run the full stack and `api` is up, you can instead:
+   ```bash
+   docker compose -f ops/docker-compose.prod.yml --env-file .env exec api node apps/api/dist/migrate.js
+   ```
+5. The script prints `schema_migrations`; or confirm by hand:
+   ```bash
+   docker compose -f ops/docker-compose.prod.yml --env-file .env exec postgres sh -c \
+     'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "select name, applied_at from schema_migrations order by name;"'
+   ```
 
 Optional seed (only in controlled environments; prefer real sign-up in production):
 
 ```bash
-docker compose -f ops/docker-compose.prod.yml exec api node apps/api/dist/migrate.js --seed
+docker compose -f ops/docker-compose.prod.yml --env-file .env exec api node apps/api/dist/migrate.js --seed
 ```
 
-Or from the monorepo with `DATABASE_URL` set: `npm run db:migrate` and `npm run db:seed`.
+### From your laptop (against the same database)
+
+Point `DATABASE_URL` at the Postgres that the VPS uses. Easiest is an **SSH tunnel** if Postgres is not exposed publicly:
+
+```bash
+ssh -L 5433:127.0.0.1:5432 <user>@<your-server-ip>
+# In another terminal, on the laptop (example):
+export DATABASE_URL="postgresql://postgres:YOUR_PASSWORD@127.0.0.1:5433/personal_llm_os"
+npm run db:migrate
+```
+
+(Use the real password and DB name from your server `.env`. If you publish port `5432` from the `postgres` service—**not recommended on the public internet**—you could connect directly without a tunnel.)
+
+### Cursor MCP
+
+The **Supabase** MCP in Cursor talks to **Supabase Cloud** projects only. It does **not** connect to Postgres inside your Hostinger Docker stack. For that DB, use SSH + the commands above, or a GUI (DBeaver, etc.) through an SSH tunnel.
 
 **Prefer**: register a real user via the **m.OS** sign-up panel in production instead of relying on `seed.sql` in public environments.
 
@@ -69,7 +104,7 @@ Or from the monorepo with `DATABASE_URL` set: `npm run db:migrate` and `npm run 
 
 ## 5. Hardening (do next)
 
-- Backups: automated `pg_dump` of the `personal_llm_os` (or your DB name) and off-site copy.
+- Backups: run `ops/scripts/backup-postgres.sh` on a schedule with `DATABASE_URL` set (or pipe `pg_dump` from the `postgres` container). Copy archives off the VPS (S3, another region, etc.). User uploads live in the API volume `m_os_uploads`; include that directory in backups if you rely on local file storage.
 - CI: this repo’s `.github/workflows/ci.yml` runs `npm run typecheck` on every push to `main` / `develop`.
 - Workers (optional): `API_BASE_URL=https://noteos.in npm run start -w @pllos/workers` on a schedule (cron) for heartbeats; extend for GitHub re-sync, etc.
 - Caddy: add `redir` from `www` to apex (or the reverse) if you want a single canonical host.

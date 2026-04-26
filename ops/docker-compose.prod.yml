@@ -45,6 +45,9 @@ services:
       CORS_ORIGIN: ${CORS_ORIGIN}
       ALLOW_X_USER_ID_HEADER: ${ALLOW_X_USER_ID_HEADER:-false}
       RATE_LIMIT_MAX_PER_MINUTE: ${RATE_LIMIT_MAX_PER_MINUTE:-200}
+      UPLOAD_DIR: /data/uploads
+    volumes:
+      - m_os_uploads:/data/uploads
     expose:
       - "4000"
 
@@ -80,5 +83,6 @@ services:
 
 volumes:
   m_os_pgdata:
+  m_os_uploads:
   caddy_data:
   caddy_config:

@@ -3,6 +3,13 @@ import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import sensible from "@fastify/sensible";
 import jwt from "@fastify/jwt";
+import multipart from "@fastify/multipart";
+import { randomUUID } from "node:crypto";
+import path from "node:path";
+import fs from "node:fs/promises";
+import { createReadStream, createWriteStream } from "node:fs";
+import { pipeline } from "node:stream/promises";
+import { generateSecret, generateURI, verifySync } from "otplib";
 import { z } from "zod";
 import { env } from "./config.js";
 import { query } from "./db.js";
@@ -27,6 +34,10 @@ if (env.RATE_LIMIT_MAX_PER_MINUTE > 0) {
   });
 }
 await app.register(sensible);
+await app.register(multipart, {
+  limits: { fileSize: 50 * 1024 * 1024 }
+});
+await fs.mkdir(env.UPLOAD_DIR, { recursive: true });
 await app.register(jwt, env.JWT_PRIVATE_KEY_BASE64 && env.JWT_PUBLIC_KEY_BASE64
   ? {
       sign: { algorithm: "RS256", iss: env.JWT_ISSUER, aud: env.JWT_AUDIENCE },
@@ -94,7 +105,12 @@ async function safeEmbedding(input: string): Promise<number[]> {
   return Array.from({ length: 768 }, () => 0);
 }
 
-async function signSession(user: { id: string; email: string; display_name: string | null }) {
+async function signSession(user: {
+  id: string;
+  email: string;
+  display_name: string | null;
+  totp_enabled?: boolean;
+}) {
   const token = await app.jwt.sign({
     sub: user.id,
     email: user.email,
@@ -105,9 +121,19 @@ async function signSession(user: { id: string; email: string; display_name: stri
     user: {
       id: user.id,
       email: user.email,
-      display_name: user.display_name
+      display_name: user.display_name,
+      totp_enabled: Boolean(user.totp_enabled)
     }
   };
+}
+
+function safeBasename(name: string): string {
+  const base = path
+    .basename(name)
+    .replace(/[^\w.\-()+ ]/g, "_")
+    .replace(/^\.+/, "")
+    .slice(0, 180);
+  return base.length > 0 ? base : "upload.bin";
 }
 
 app.get("/health", async () => ({ ok: true, env: env.NODE_ENV }));
@@ -165,17 +191,27 @@ app.post("/api/auth/register", async (request, reply) => {
     [body.email.toLowerCase(), body.display_name ?? null, passwordHash]
   );
   await audit(rows[0].id, "auth.register", "user", rows[0].id, { email: rows[0].email });
-  return reply.code(201).send(await signSession(rows[0]));
+  return reply.code(201).send(await signSession({ ...rows[0], totp_enabled: false }));
 });
 
-app.post("/api/auth/login", async (request) => {
-  const body = z.object({
-    email: z.string().email(),
-    password: z.string().min(1)
-  }).parse(request.body);
+app.post("/api/auth/login", async (request, reply) => {
+  const body = z
+    .object({
+      email: z.string().email(),
+      password: z.string().min(1),
+      totp_code: z.string().regex(/^\d{6}$/).optional()
+    })
+    .parse(request.body);
 
-  const rows = await query<{ id: string; email: string; display_name: string | null; password_hash: string | null }>(
-    `select id, email, display_name, password_hash
+  const rows = await query<{
+    id: string;
+    email: string;
+    display_name: string | null;
+    password_hash: string | null;
+    totp_enabled: boolean;
+    totp_secret_ciphertext: string | null;
+  }>(
+    `select id, email, display_name, password_hash, totp_enabled, totp_secret_ciphertext
      from users
      where email = $1
      limit 1`,
@@ -186,14 +222,43 @@ app.post("/api/auth/login", async (request) => {
     throw app.httpErrors.unauthorized("Invalid email or password");
   }
 
+  if (user.totp_enabled) {
+    if (!user.totp_secret_ciphertext) {
+      throw app.httpErrors.internalServerError("TOTP misconfigured for user");
+    }
+    const secret = decryptSecret(user.totp_secret_ciphertext);
+    if (!body.totp_code) {
+      return reply.code(401).send({
+        code: "TOTP_REQUIRED",
+        message: "Authenticator code required"
+      });
+    }
+    if (!verifySync({ secret, token: body.totp_code }).valid) {
+      throw app.httpErrors.unauthorized("Invalid authenticator code");
+    }
+  }
+
   await audit(user.id, "auth.login", "user", user.id);
-  return signSession(user);
+  return signSession({
+    id: user.id,
+    email: user.email,
+    display_name: user.display_name,
+    totp_enabled: user.totp_enabled
+  });
 });
 
 app.get("/api/auth/me", async (request) => {
   const userId = getUserId(request.headers as Record<string, unknown>);
-  const rows = await query<{ id: string; email: string; display_name: string | null; created_at: string }>(
-    `select id, email, display_name, created_at
+  const rows = await query<{
+    id: string;
+    email: string;
+    display_name: string | null;
+    created_at: string;
+    totp_enabled: boolean;
+    totp_enrollment_pending: boolean;
+  }>(
+    `select id, email, display_name, created_at, totp_enabled,
+            (totp_pending_secret_ciphertext is not null) as totp_enrollment_pending
      from users
      where id = $1
      limit 1`,
@@ -203,6 +268,74 @@ app.get("/api/auth/me", async (request) => {
     throw app.httpErrors.notFound("User not found");
   }
   return rows[0];
+});
+
+app.post("/api/auth/totp/enroll-start", async (request) => {
+  const userId = getUserId(request.headers as Record<string, unknown>);
+  const rows = await query<{ email: string; totp_enabled: boolean }>(
+    `select email, totp_enabled from users where id = $1 limit 1`,
+    [userId]
+  );
+  const u = rows[0];
+  if (!u) {
+    throw app.httpErrors.notFound("User not found");
+  }
+  if (u.totp_enabled) {
+    throw app.httpErrors.badRequest("TOTP already enabled");
+  }
+
+  const secret = generateSecret();
+  const enc = encryptSecret(secret);
+  await query(`update users set totp_pending_secret_ciphertext = $1 where id = $2`, [enc, userId]);
+  await audit(userId, "auth.totp.enroll_start", "user", userId);
+  const otpauth_url = generateURI({ issuer: "m.OS", label: u.email, secret });
+  return { otpauth_url, secret };
+});
+
+app.post("/api/auth/totp/enroll-verify", async (request) => {
+  const userId = getUserId(request.headers as Record<string, unknown>);
+  const body = z.object({ code: z.string().regex(/^\d{6}$/) }).parse(request.body);
+  const rows = await query<{ pending: string | null; enabled: boolean }>(
+    `select totp_pending_secret_ciphertext as pending, totp_enabled as enabled from users where id = $1 limit 1`,
+    [userId]
+  );
+  if (!rows[0]?.pending) {
+    throw app.httpErrors.badRequest("No enrollment in progress");
+  }
+  if (rows[0].enabled) {
+    throw app.httpErrors.badRequest("TOTP already enabled");
+  }
+  const plain = decryptSecret(rows[0].pending);
+  if (!verifySync({ secret: plain, token: body.code }).valid) {
+    throw app.httpErrors.unauthorized("Invalid code");
+  }
+  await query(
+    `update users set totp_secret_ciphertext = totp_pending_secret_ciphertext,
+         totp_pending_secret_ciphertext = null, totp_enabled = true
+     where id = $1`,
+    [userId]
+  );
+  await audit(userId, "auth.totp.enable", "user", userId);
+  return { ok: true };
+});
+
+app.post("/api/auth/totp/disable", async (request) => {
+  const userId = getUserId(request.headers as Record<string, unknown>);
+  const body = z.object({ password: z.string().min(1) }).parse(request.body);
+  const rows = await query<{ password_hash: string | null }>(
+    `select password_hash from users where id = $1 limit 1`,
+    [userId]
+  );
+  if (!rows[0]?.password_hash || !(await verifyPassword(body.password, rows[0].password_hash))) {
+    throw app.httpErrors.unauthorized("Invalid password");
+  }
+  await query(
+    `update users set totp_secret_ciphertext = null, totp_pending_secret_ciphertext = null, totp_enabled = false
+     where id = $1`,
+    [userId]
+  );
+  await audit(userId, "auth.totp.disable", "user", userId);
+  return { ok: true };
 });
 
 app.get("/api/projects", async (request) => {
@@ -325,6 +458,101 @@ app.post("/api/playgrounds", async (request, reply) => {
   );
   await audit(userId, "playground.create", "playground", rows[0]?.id, { stage: body.stage });
   return reply.code(201).send({ id: rows[0]?.id });
+});
+
+app.patch("/api/playgrounds/:id", async (request) => {
+  const userId = getUserId(request.headers as Record<string, unknown>);
+  const params = z.object({ id: z.string().uuid() }).parse(request.params);
+  const body = z
+    .object({
+      title: z.string().min(1).optional(),
+      brief: z.string().optional(),
+      stage: z.enum(["seed", "research", "prototype", "build", "paused", "launched"]).optional(),
+      current_focus: z.string().optional(),
+      next_actions: z.array(z.string()).optional(),
+      project_id: z.union([z.string().uuid(), z.null()]).optional(),
+      idea_id: z.union([z.string().uuid(), z.null()]).optional()
+    })
+    .parse(request.body);
+
+  const existing = await query<{ id: string }>(
+    `select id from playgrounds where id = $1 and user_id = $2 limit 1`,
+    [params.id, userId]
+  );
+  if (!existing[0]) {
+    throw app.httpErrors.notFound("Playground not found");
+  }
+
+  if (body.project_id) {
+    const p = await query<{ id: string }>(
+      `select id from projects where id = $1 and user_id = $2 limit 1`,
+      [body.project_id, userId]
+    );
+    if (!p[0]) {
+      throw app.httpErrors.notFound("Project not found");
+    }
+  }
+  if (body.idea_id) {
+    const k = await query<{ id: string }>(
+      `select id from knowledge_items where id = $1 and user_id = $2 limit 1`,
+      [body.idea_id, userId]
+    );
+    if (!k[0]) {
+      throw app.httpErrors.notFound("Knowledge item not found");
+    }
+  }
+
+  const sets: string[] = [];
+  const vals: unknown[] = [];
+  let i = 1;
+  if (body.title !== undefined) {
+    sets.push(`title = $${i++}`);
+    vals.push(body.title);
+  }
+  if (body.brief !== undefined) {
+    sets.push(`brief = $${i++}`);
+    vals.push(body.brief);
+  }
+  if (body.stage !== undefined) {
+    sets.push(`stage = $${i++}`);
+    vals.push(body.stage);
+  }
+  if (body.current_focus !== undefined) {
+    sets.push(`current_focus = $${i++}`);
+    vals.push(body.current_focus);
+  }
+  if (body.next_actions !== undefined) {
+    sets.push(`next_actions = $${i++}`);
+    vals.push(JSON.stringify(body.next_actions));
+  }
+  if (body.project_id !== undefined) {
+    sets.push(`project_id = $${i++}`);
+    vals.push(body.project_id);
+  }
+  if (body.idea_id !== undefined) {
+    sets.push(`idea_id = $${i++}`);
+    vals.push(body.idea_id);
+  }
+
+  if (sets.length > 0) {
+    vals.push(params.id, userId);
+    await query(
+      `update playgrounds set ${sets.join(", ")} where id = $${i++} and user_id = $${i}`,
+      vals
+    );
+  }
+
+  const updated = await query(
+    `select pg.*, p.name as project_name, ki.title as idea_title
+     from playgrounds pg
+     left join projects p on p.id = pg.project_id
+     left join knowledge_items ki on ki.id = pg.idea_id
+     where pg.id = $1 and pg.user_id = $2
+     limit 1`,
+    [params.id, userId]
+  );
+  await audit(userId, "playground.update", "playground", params.id, body);
+  return updated[0];
 });
 
 app.get("/api/platform-connections", async (request) => {
@@ -795,6 +1023,87 @@ ${ragRows
   );
   await audit(userId, "assistant.chat", "assistant_session", undefined, { policy: body.policy, provider: completion.provider, rag: body.include_rag });
   return { ...completion, rag_sources: ragSources };
+});
+
+app.post("/api/files/upload", async (request, reply) => {
+  const userId = getUserId(request.headers as Record<string, unknown>);
+  let projectId: string | undefined;
+  let filePart: { filename: string; mimetype: string; file: NodeJS.ReadableStream } | null = null;
+
+  for await (const part of request.parts()) {
+    if (part.type === "file") {
+      filePart = part;
+    } else if (part.type === "field" && part.fieldname === "project_id") {
+      const v = String(part.value ?? "").trim();
+      if (v) {
+        projectId = v;
+      }
+    }
+  }
+
+  if (!filePart) {
+    throw app.httpErrors.badRequest("Expected a file upload");
+  }
+
+  if (projectId) {
+    const proj = await query<{ id: string }>(
+      `select id from projects where id = $1 and user_id = $2 limit 1`,
+      [projectId, userId]
+    );
+    if (!proj[0]) {
+      throw app.httpErrors.notFound("Project not found");
+    }
+  }
+
+  const id = randomUUID();
+  const fileName = safeBasename(filePart.filename);
+  const relativeKey = `${userId}/${id}-${fileName}`;
+  const fullPath = path.join(env.UPLOAD_DIR, relativeKey);
+  await fs.mkdir(path.dirname(fullPath), { recursive: true });
+  await pipeline(filePart.file, createWriteStream(fullPath));
+  const st = await fs.stat(fullPath);
+
+  const inserted = await query<{ id: string }>(
+    `insert into files (user_id, project_id, storage_key, file_name, mime_type, size_bytes)
+     values ($1, $2, $3, $4, $5, $6)
+     returning id`,
+    [userId, projectId ?? null, relativeKey, fileName, filePart.mimetype || null, st.size]
+  );
+  await audit(userId, "file.upload", "file", inserted[0]?.id, { file_name: fileName, size: st.size });
+  return reply.code(201).send({ id: inserted[0]?.id });
+});
+
+app.get("/api/files", async (request) => {
+  const userId = getUserId(request.headers as Record<string, unknown>);
+  return query(
+    `select id, file_name, mime_type, size_bytes, project_id, created_at
+     from files
+     where user_id = $1
+     order by created_at desc
+     limit 100`,
+    [userId]
+  );
+});
+
+app.get("/api/files/:id/download", async (request, reply) => {
+  const userId = getUserId(request.headers as Record<string, unknown>);
+  const params = z.object({ id: z.string().uuid() }).parse(request.params);
+  const rows = await query<{ storage_key: string; mime_type: string | null; file_name: string }>(
+    `select storage_key, mime_type, file_name from files where id = $1 and user_id = $2 limit 1`,
+    [params.id, userId]
+  );
+  if (!rows[0]) {
+    throw app.httpErrors.notFound("File not found");
+  }
+  const fullPath = path.join(env.UPLOAD_DIR, rows[0].storage_key);
+  try {
+    await fs.access(fullPath);
+  } catch {
+    throw app.httpErrors.notFound("File missing on disk");
+  }
+  await audit(userId, "file.download", "file", params.id);
+  reply.header("Content-Disposition", `attachment; filename="${rows[0].file_name.replace(/"/g, "")}"`);
+  return reply.type(rows[0].mime_type ?? "application/octet-stream").send(createReadStream(fullPath));
 });
 
 app.get("/api/audit-events", async (request) => {

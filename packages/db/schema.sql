@@ -6,6 +6,9 @@ create table if not exists users (
   email text unique not null,
   display_name text,
   password_hash text,
+  totp_secret_ciphertext text,
+  totp_pending_secret_ciphertext text,
+  totp_enabled boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -207,6 +210,7 @@ create index if not exists idx_knowledge_items_embedding on knowledge_items usin
 create index if not exists idx_todos_user_id on todos(user_id);
 create index if not exists idx_diary_entries_user_id on diary_entries(user_id);
 create index if not exists idx_audit_events_user_id on audit_events(user_id);
+create index if not exists idx_files_user_id on files(user_id);
 
 create or replace function set_updated_at()
 returns trigger as $$
