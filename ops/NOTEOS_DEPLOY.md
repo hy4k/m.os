@@ -31,6 +31,8 @@ cp .env.example .env
 
 **Never** commit real `.env` to git.
 
+**Next.js browser API URL:** `NEXT_PUBLIC_*` is **embedded when the web image is built**, not when the container starts. After changing `NEXT_PUBLIC_API_BASE_URL`, run **`docker compose build web`** (or rebuild in Coolify) so the UI calls `https://your-domain` instead of the default `http://localhost:4000`.
+
 ## 2. Build and start (Docker Compose)
 
 From the **repo root** (or sync this tree on the server):
